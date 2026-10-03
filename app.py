@@ -1,15 +1,13 @@
 """
 My Trading Records — Streamlit Cloud App
 Hosted on Streamlit Cloud — works on mobile, tablet, any device.
-Data stored in Google Sheets (cloud) — safe even if laptop is lost.
+Data stored in Supabase — safe even if laptop is lost.
 """
 
-import os
 import json
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from io import BytesIO
 
 import streamlit as st
 import plotly.graph_objects as go
@@ -40,87 +38,107 @@ DEFAULT_STT_PCT   = 0.05
 DEFAULT_OTHER     = 15.0
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Google Sheets helpers
+# Supabase helpers (same backend as raja-trading-records)
 # ─────────────────────────────────────────────────────────────────────────────
-def _get_conn():
+def _is_cloud() -> bool:
     try:
-        if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-            from streamlit_gsheets import GSheetsConnection
-            return st.connection("gsheets", type=GSheetsConnection)
+        return "supabase_url" in st.secrets and "supabase_key" in st.secrets
     except Exception:
-        pass
-    return None
+        return False
 
 
-@st.cache_data(ttl=5, show_spinner=False)
+def _get_client():
+    from supabase import create_client
+    return create_client(st.secrets["supabase_url"], st.secrets["supabase_key"])
+
+
+@st.cache_data(ttl=10, show_spinner=False)
 def load_trades() -> pd.DataFrame:
-    conn = _get_conn()
-    if conn:
-        try:
-            df = conn.read(worksheet="Trades", ttl="0s")
-            if df is not None and not df.empty:
-                for col in COLUMNS:
-                    if col not in df.columns:
-                        df[col] = ""
-                return df[COLUMNS]
-        except Exception:
-            pass
-    return pd.DataFrame(columns=COLUMNS)
+    if not _is_cloud():
+        if "trades_df" not in st.session_state:
+            st.session_state.trades_df = pd.DataFrame(columns=COLUMNS)
+        return st.session_state.trades_df.copy()
+    try:
+        client = _get_client()
+        resp   = client.table("trades").select("*").order("trade_num").execute()
+        data   = resp.data
+        if not data:
+            return pd.DataFrame(columns=COLUMNS)
+        df = pd.DataFrame(data).rename(columns={"trade_num": "Trade #"})
+        for col in COLUMNS:
+            if col not in df.columns:
+                df[col] = ""
+        return df[COLUMNS]
+    except Exception as e:
+        st.warning("Could not load trades: {}".format(e))
+        return pd.DataFrame(columns=COLUMNS)
 
 
-@st.cache_data(ttl=5, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def load_capital() -> dict:
-    conn = _get_conn()
-    if conn:
-        try:
-            cdf = conn.read(worksheet="Capital", ttl="0s")
-            if cdf is not None and not cdf.empty:
-                row = cdf.iloc[0].to_dict()
-                hist_raw = row.get("history_json", "[]")
-                history = json.loads(hist_raw) if isinstance(hist_raw, str) else []
-                return {
-                    "initial_capital": float(row.get("initial_capital", 40000.0)),
-                    "current_capital": float(row.get("current_capital", 40000.0)),
-                    "start_date":      str(row.get("start_date", "2025-01-01")),
-                    "notes":           str(row.get("notes", "")),
-                    "history":         history,
-                }
-        except Exception:
-            pass
-    return {
-        "initial_capital": 40000.0,
-        "current_capital": 40000.0,
-        "start_date":      "2025-01-01",
-        "notes":           "Started trading Nifty F&O options",
-        "history":         [{"date": "2025-01-01", "balance": 40000.0, "note": "Initial capital"}],
+    default = {
+        "initial_capital": 40000.0, "current_capital": 40000.0,
+        "start_date": "2025-01-01", "notes": "Started trading Nifty F&O",
+        "history": [{"date": "2025-01-01", "balance": 40000.0, "note": "Initial capital"}],
     }
+    if not _is_cloud():
+        return st.session_state.get("capital_data", default)
+    try:
+        client = _get_client()
+        resp   = client.table("capital").select("*").order("date").execute()
+        data   = resp.data
+        if not data:
+            return default
+        # Build history from all rows
+        history = [{"date": r.get("date",""), "balance": float(r.get("balance", 40000)),
+                    "note": r.get("note","")} for r in data]
+        initial = float(data[0].get("balance", 40000.0))
+        current = float(data[-1].get("balance", 40000.0))
+        return {
+            "initial_capital": initial,
+            "current_capital": current,
+            "start_date":      data[0].get("date", "2025-01-01"),
+            "notes":           "",
+            "history":         history,
+        }
+    except Exception as e:
+        st.warning("Could not load capital: {}".format(e))
+        return default
 
 
 def save_trades(df: pd.DataFrame):
-    conn = _get_conn()
-    if conn:
-        try:
-            conn.update(worksheet="Trades", data=df)
-            st.cache_data.clear()
-        except Exception as e:
-            st.error("Could not save to Google Sheets: {}".format(e))
+    load_trades.clear()
+    if not _is_cloud():
+        st.session_state.trades_df = df.copy()
+        return
+    try:
+        client = _get_client()
+        client.table("trades").delete().neq("trade_num", -999).execute()
+        rows = df.copy().rename(columns={"Trade #": "trade_num"})
+        rows = rows.fillna("").astype(str)
+        records = rows.to_dict("records")
+        if records:
+            client.table("trades").insert(records).execute()
+    except Exception as e:
+        st.error("Could not save trades: {}".format(e))
 
 
 def save_capital(data: dict):
-    conn = _get_conn()
-    if conn:
-        try:
-            cdf = pd.DataFrame([{
-                "initial_capital": data.get("initial_capital", 40000.0),
-                "current_capital": data.get("current_capital", 40000.0),
-                "start_date":      data.get("start_date", "2025-01-01"),
-                "notes":           data.get("notes", ""),
-                "history_json":    json.dumps(data.get("history", [])),
-            }])
-            conn.update(worksheet="Capital", data=cdf)
-            st.cache_data.clear()
-        except Exception as e:
-            st.error("Could not save capital: {}".format(e))
+    load_capital.clear()
+    if not _is_cloud():
+        st.session_state.capital_data = data
+        return
+    try:
+        client  = _get_client()
+        history = data.get("history", [])
+        # Rebuild capital table from history
+        client.table("capital").delete().neq("date", "1900-01-01").execute()
+        records = [{"date": h.get("date",""), "balance": float(h.get("balance",0)),
+                    "note": h.get("note","")} for h in history]
+        if records:
+            client.table("capital").insert(records).execute()
+    except Exception as e:
+        st.error("Could not save capital: {}".format(e))
 
 
 def delete_trade_entry(df: pd.DataFrame, trade_num: int, cap_data: dict) -> tuple:
@@ -230,11 +248,10 @@ page = st.sidebar.radio(
      "📋 All Trades", "📅 Monthly Report", "📈 Performance", "💸 Expenses", "⬇️ Export"],
 )
 st.sidebar.markdown("---")
-conn_ok = _get_conn() is not None
-if conn_ok:
-    st.sidebar.success("☁️ Storage: **Google Sheets (Live Cloud)**")
+if _is_cloud():
+    st.sidebar.success("☁️ Storage: **Supabase (Live Cloud)**")
 else:
-    st.sidebar.error("⚠️ Google Sheets not connected.\nAdd secrets in Streamlit Cloud settings.")
+    st.sidebar.warning("💻 Running locally — data in memory only")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Load data
