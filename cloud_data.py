@@ -99,20 +99,28 @@ def load_trades() -> pd.DataFrame:
 
 
 def _save_trades(df: pd.DataFrame) -> None:
-    """Upsert trades into Supabase using trade_num as the unique key."""
+    """Save trades to Supabase — delete all rows then re-insert."""
     load_trades.clear()
     if not _is_cloud():
         st.session_state.trades_df = df.copy()
         return
     try:
-        client  = _get_client()
-        db_cols = list(COL_TO_DB.values())  # exact Supabase column names
+        client = _get_client()
 
+        # Step 1: delete every existing row
+        client.table("trades").delete().gte("trade_num", 0).execute()
+
+        if df.empty:
+            return
+
+        # Step 2: rename display columns → Supabase column names
         rows = df.copy().rename(columns=COL_TO_DB)
-        # Keep only mapped columns that exist
+
+        # Step 3: keep only columns that exist in our mapping
+        db_cols = list(COL_TO_DB.values())
         rows = rows[[c for c in db_cols if c in rows.columns]]
 
-        # Cast numeric columns properly — don't stringify everything
+        # Step 4: cast numeric columns to proper types (not strings)
         numeric_cols = [
             "trade_num", "strike", "entry_price", "exit_price",
             "lots", "lot_size", "capital_used", "gross_pnl",
@@ -123,13 +131,12 @@ def _save_trades(df: pd.DataFrame) -> None:
             if col in rows.columns:
                 rows[col] = pd.to_numeric(rows[col], errors="coerce")
 
-        # Fill remaining NaN with None (not empty string) for Supabase
+        # Step 5: replace NaN/None with None for clean JSON
         rows = rows.where(pd.notnull(rows), None)
         records = rows.to_dict("records")
 
         if records:
-            # Upsert on trade_num — safe to call even if row already exists
-            client.table("trades").upsert(records, on_conflict="trade_num").execute()
+            client.table("trades").insert(records).execute()
     except Exception as e:
         st.error("Could not save trade: {}".format(e))
 
