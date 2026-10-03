@@ -70,6 +70,7 @@ if page == "📊 Dashboard":
 
     # Capital health bar
     rem_pct = (cap_stats["current"] / cap_stats["initial"] * 100) if cap_stats["initial"] else 0
+    rem_pct_safe = max(0, min(int(rem_pct), 100))
     cap_d, cap_dc = pnl_color(cap_stats["pnl"])
     cc1, cc2, cc3, cc4, cc5 = st.columns(5)
     cc1.metric("💰 Initial Capital",  "Rs {:,.0f}".format(cap_stats["initial"]))
@@ -82,7 +83,7 @@ if page == "📊 Dashboard":
                delta_color="normal" if rem_pct >= 80 else "inverse")
 
     prog = "🟢" if rem_pct >= 80 else ("🟡" if rem_pct >= 60 else "🔴")
-    st.progress(min(int(rem_pct), 100),
+    st.progress(rem_pct_safe,
                 text="{} Rs {:,.0f} of Rs {:,.0f} remaining ({:.1f}%)".format(
                     prog, cap_stats["current"], cap_stats["initial"], rem_pct))
 
@@ -197,6 +198,7 @@ elif page == "💰 My Capital":
     st.markdown("---")
 
     rem_pct = (cap_stats["current"] / cap_stats["initial"] * 100) if cap_stats["initial"] else 0
+    rem_pct_safe = max(0, min(int(rem_pct), 100))
     cap_d, cap_dc = pnl_color(cap_stats["pnl"])
 
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -210,7 +212,7 @@ elif page == "💰 My Capital":
               delta_color="normal" if rem_pct >= 80 else "inverse")
 
     prog = "🟢" if rem_pct >= 80 else ("🟡" if rem_pct >= 60 else "🔴")
-    st.progress(min(int(rem_pct), 100),
+    st.progress(rem_pct_safe,
                 text="{} Rs {:,.0f} of Rs {:,.0f} remaining ({:.1f}%)".format(
                     prog, cap_stats["current"], cap_stats["initial"], rem_pct))
 
