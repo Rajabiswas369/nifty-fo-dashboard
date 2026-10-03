@@ -25,11 +25,20 @@ def _get_angel_credentials():
 def is_angel_configured() -> bool:
     """True if Angel One credentials are present in secrets."""
     try:
-        return (
+        # Check both top-level and nested under connections
+        top_level = (
             "angel_api_key"   in st.secrets and
             "angel_client_id" in st.secrets and
             "angel_mpin"      in st.secrets
         )
+        if top_level:
+            return True
+        # Also check if accidentally nested
+        if "connections" in st.secrets:
+            conn = st.secrets["connections"]
+            if hasattr(conn, "__contains__") and "angel_api_key" in conn:
+                return True
+        return False
     except Exception:
         return False
 
