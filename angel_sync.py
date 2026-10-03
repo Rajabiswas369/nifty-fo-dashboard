@@ -9,38 +9,50 @@ from datetime import datetime
 import traceback
 
 
-def _get_angel_credentials():
-    """Read Angel One credentials from Streamlit secrets."""
+def _read_secret(key: str, default=None):
+    """
+    Read a secret — checks top level first, then [angel] section,
+    then [connections.gsheets] section (in case user put them there by mistake).
+    """
     try:
-        return {
-            "api_key":   st.secrets["angel_api_key"],
-            "client_id": st.secrets["angel_client_id"],
-            "mpin":      st.secrets["angel_mpin"],
-            "totp_key":  st.secrets.get("angel_totp_key", ""),
-        }
+        if key in st.secrets:
+            return st.secrets[key]
     except Exception:
-        return None
+        pass
+    try:
+        if "angel" in st.secrets and key in st.secrets["angel"]:
+            return st.secrets["angel"][key]
+    except Exception:
+        pass
+    # Strip "angel_" prefix and check [angel] section
+    short = key.replace("angel_", "")
+    try:
+        if "angel" in st.secrets and short in st.secrets["angel"]:
+            return st.secrets["angel"][short]
+    except Exception:
+        pass
+    return default
+
+
+def _get_angel_credentials():
+    """Read Angel One credentials from Streamlit secrets — any location."""
+    try:
+        api_key   = _read_secret("angel_api_key")   or _read_secret("api_key")
+        client_id = _read_secret("angel_client_id") or _read_secret("client_id")
+        mpin      = _read_secret("angel_mpin")      or _read_secret("mpin")
+        totp_key  = _read_secret("angel_totp_key")  or _read_secret("totp_key") or ""
+        if api_key and client_id and mpin:
+            return {"api_key": api_key, "client_id": client_id,
+                    "mpin": mpin, "totp_key": totp_key}
+    except Exception:
+        pass
+    return None
 
 
 def is_angel_configured() -> bool:
-    """True if Angel One credentials are present in secrets."""
-    try:
-        # Check both top-level and nested under connections
-        top_level = (
-            "angel_api_key"   in st.secrets and
-            "angel_client_id" in st.secrets and
-            "angel_mpin"      in st.secrets
-        )
-        if top_level:
-            return True
-        # Also check if accidentally nested
-        if "connections" in st.secrets:
-            conn = st.secrets["connections"]
-            if hasattr(conn, "__contains__") and "angel_api_key" in conn:
-                return True
-        return False
-    except Exception:
-        return False
+    """True if Angel One credentials are readable from any secret location."""
+    creds = _get_angel_credentials()
+    return creds is not None
 
 
 def _login_angel():
