@@ -1282,24 +1282,26 @@ elif page == "🔄 Angel One Sync":
     st.caption("Automatically fetch your executed trades from Angel One — no manual entry needed!")
     st.markdown("---")
 
-    # ── Secrets debug panel ──────────────────────────────────────────────────
-    with st.expander("🔍 Debug: What secrets are loaded?", expanded=True):
-        try:
-            all_keys = list(st.secrets.keys())
-            st.write("**Top-level keys:**", all_keys)
-            # Check [angel] section
-            if "angel" in st.secrets:
-                angel_keys = list(st.secrets["angel"].keys())
-                st.write("**Keys inside [angel] section:**", angel_keys)
-                for k in ["api_key", "client_id", "mpin", "totp_key"]:
-                    if k in st.secrets["angel"]:
-                        st.success("✅ angel.{} = {}...".format(k, str(st.secrets["angel"][k])[:4]))
-                    else:
-                        st.error("❌ angel.{} — NOT FOUND".format(k))
-            else:
-                st.warning("No [angel] section found")
-        except Exception as ex:
-            st.error("Error reading secrets: {}".format(ex))
+    # ── Raw API debug panel ───────────────────────────────────────────────────
+    with st.expander("🔍 Debug: Raw Angel One API response", expanded=True):
+        if st.button("🔎 Check what Angel One API returns (raw)"):
+            try:
+                from angel_sync import _login_angel
+                with st.spinner("Connecting to Angel One..."):
+                    obj = _login_angel()
+                    st.success("✅ Login successful!")
+
+                    tb = obj.tradeBook()
+                    st.markdown("**tradeBook() response:**")
+                    st.json(tb)
+
+                    ob = obj.orderBook()
+                    st.markdown("**orderBook() response:**")
+                    st.json(ob)
+            except Exception as ex:
+                st.error("Error: {}".format(ex))
+                import traceback
+                st.code(traceback.format_exc())
     st.markdown("---")
 
     render_angel_sync_panel(load_fn=load_trades, save_fn=save_trades, columns=TRADE_COLUMNS)
