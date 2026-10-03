@@ -556,10 +556,13 @@ elif page == "📓 Log Trade":
                 save_capital(cap_data)
 
             emoji = "✅ WIN" if result == "WIN" else ("❌ LOSS" if result == "LOSS" else "📂 OPEN")
-            st.success("Trade #{} saved to cloud! {} | Net P&L: {} | New Balance: Rs {:,.0f}".format(
-                row["Trade #"], emoji,
-                "Rs {:,.0f}".format(net) if f_exit > 0 else "Open",
-                cap_data["current_capital"] if result in ("WIN","LOSS") else cap_stats["current"]))
+            pnl_msg = "Rs {:,.0f}".format(net) if f_exit > 0 else "Open"
+            if result in ("WIN", "LOSS"):
+                bal_msg = " | New Balance: Rs {:,.0f}".format(cap_data["current_capital"])
+            else:
+                bal_msg = ""
+            st.success("Trade #{} saved to cloud! {} | Net P&L: {}{}".format(
+                row["Trade #"], emoji, pnl_msg, bal_msg))
             st.cache_data.clear()
             st.rerun()
 
