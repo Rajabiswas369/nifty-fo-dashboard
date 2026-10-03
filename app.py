@@ -430,6 +430,14 @@ elif page == "📓 Log Trade":
     if f_entry <= 0:
         st.warning("⚠️ Please fill in an **Entry Price > 0** before clicking save.")
 
+    # ── Show persistent save result (survives rerun) ──────────────────────────
+    if "trade_save_msg" in st.session_state:
+        msg = st.session_state.pop("trade_save_msg")
+        if msg.get("type") == "success":
+            st.success(msg["text"])
+        else:
+            st.error(msg["text"])
+
     if st.button("💾 Save Trade to Cloud Records", use_container_width=True, type="primary"):
         if f_entry <= 0:
             st.error("Entry price must be greater than 0.")
@@ -451,8 +459,10 @@ elif page == "📓 Log Trade":
                     new_bal_msg = " | New Balance: Rs {:,.0f}".format(cap_stats["current"] + net_val)
                 except Exception:
                     pass
-            st.success("Trade #{} saved! {}{}".format(
-                saved["Trade #"], em, new_bal_msg))
+            st.session_state["trade_save_msg"] = {
+                "type": "success",
+                "text": "Trade #{} saved! {}{}".format(saved["Trade #"], em, new_bal_msg),
+            }
             st.rerun()
 
     # ── Recent Trades Log + Delete ─────────────────────────────────────────────
@@ -469,6 +479,14 @@ elif page == "📓 Log Trade":
 
         st.markdown("#### 🗑️ Delete a Trade")
         st.caption("⚠️ Deleting a closed trade will also reverse its impact on your capital balance.")
+
+        if "del_trade_msg" in st.session_state:
+            msg = st.session_state.pop("del_trade_msg")
+            if msg.get("type") == "success":
+                st.success(msg["text"])
+            else:
+                st.error(msg["text"])
+
         del_col1, del_col2 = st.columns([2, 1])
         trade_options = fresh_df.sort_values("Trade #", ascending=False)["Trade #"].tolist()
         trade_labels  = [
@@ -483,11 +501,13 @@ elif page == "📓 Log Trade":
         if del_col2.button("🗑️ Delete Selected Trade", type="secondary", use_container_width=True, key="cr_del_btn"):
             status = delete_trade(sel_num)
             if status == "deleted_with_capital":
-                st.success("✅ Trade #{} deleted and capital balance reversed.".format(sel_num))
+                st.session_state["del_trade_msg"] = {"type": "success",
+                    "text": "✅ Trade #{} deleted and capital balance reversed.".format(sel_num)}
             elif status == "deleted":
-                st.success("✅ Trade #{} deleted (OPEN trade — no capital change).".format(sel_num))
+                st.session_state["del_trade_msg"] = {"type": "success",
+                    "text": "✅ Trade #{} deleted (OPEN trade — no capital change).".format(sel_num)}
             else:
-                st.error(status)
+                st.session_state["del_trade_msg"] = {"type": "error", "text": status}
             st.rerun()
 
 
