@@ -99,21 +99,37 @@ def load_trades() -> pd.DataFrame:
 
 
 def _save_trades(df: pd.DataFrame) -> None:
-    """Save full trades DataFrame back to Supabase."""
+    """Upsert trades into Supabase using trade_num as the unique key."""
     load_trades.clear()
     if not _is_cloud():
         st.session_state.trades_df = df.copy()
         return
     try:
-        client = _get_client()
-        client.table("trades").delete().neq("trade_num", -999).execute()
+        client  = _get_client()
+        db_cols = list(COL_TO_DB.values())  # exact Supabase column names
+
         rows = df.copy().rename(columns=COL_TO_DB)
-        rows = rows.fillna("").astype(str)
-        # Only keep columns that exist in the mapping
-        db_cols = [c for c in rows.columns if c in DB_TO_COL or c in COL_TO_DB.values()]
-        records = rows[db_cols].to_dict("records")
+        # Keep only mapped columns that exist
+        rows = rows[[c for c in db_cols if c in rows.columns]]
+
+        # Cast numeric columns properly — don't stringify everything
+        numeric_cols = [
+            "trade_num", "strike", "entry_price", "exit_price",
+            "lots", "lot_size", "capital_used", "gross_pnl",
+            "brokerage", "stt", "other_charges", "net_pnl",
+            "entry_rsi", "entry_adx",
+        ]
+        for col in numeric_cols:
+            if col in rows.columns:
+                rows[col] = pd.to_numeric(rows[col], errors="coerce")
+
+        # Fill remaining NaN with None (not empty string) for Supabase
+        rows = rows.where(pd.notnull(rows), None)
+        records = rows.to_dict("records")
+
         if records:
-            client.table("trades").insert(records).execute()
+            # Upsert on trade_num — safe to call even if row already exists
+            client.table("trades").upsert(records, on_conflict="trade_num").execute()
     except Exception as e:
         st.error("Could not save trade: {}".format(e))
 
@@ -255,10 +271,14 @@ def _save_capital(df: pd.DataFrame) -> None:
         return
     try:
         client = _get_client()
+        # Full replace — delete all then insert clean rows
         client.table("capital").delete().neq("date", "1900-01-01").execute()
         rows = df.copy()
         rows.columns = [c.lower() for c in rows.columns]
-        records = rows.fillna("").astype(str).to_dict("records")
+        # Keep balance as a proper float, not a string
+        rows["balance"] = pd.to_numeric(rows["balance"], errors="coerce")
+        rows = rows.where(pd.notnull(rows), None)
+        records = rows.to_dict("records")
         if records:
             client.table("capital").insert(records).execute()
     except Exception as e:
