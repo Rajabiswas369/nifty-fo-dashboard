@@ -18,9 +18,7 @@ Deploy to Streamlit Cloud — works on any device (mobile, tablet, PC).
 Data stored permanently in Google Sheets — safe even if laptop is lost.
 
 Secrets required in Streamlit Cloud Settings → Secrets:
-  [connections.gsheets]
-  spreadsheet = "YOUR_GOOGLE_SHEET_URL"
-  type = "public"
+  spreadsheet_url = "YOUR_GOOGLE_SHEET_URL"
 
   angel_api_key   = "YOUR_API_KEY"
   angel_client_id = "YOUR_CLIENT_ID"
@@ -193,7 +191,7 @@ else:
 # Cloud connection status in sidebar
 st.sidebar.markdown("---")
 try:
-    _conn_ok = ("connections" in st.secrets and "gsheets" in st.secrets["connections"])
+    _conn_ok = "spreadsheet_url" in st.secrets
 except Exception:
     _conn_ok = False
 
@@ -210,53 +208,73 @@ else:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# GOOGLE SHEETS HELPERS
+# GOOGLE SHEETS HELPERS  (uses gspread directly — no st-gsheets-connection)
 # ═════════════════════════════════════════════════════════════════════════════
-def _get_conn():
+def _open_sheet():
+    """Open the Google Spreadsheet using the public URL from secrets."""
     try:
-        if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-            from streamlit_gsheets import GSheetsConnection
-            return st.connection("gsheets", type=GSheetsConnection)
+        import gspread
+        from google.oauth2.service_account import Credentials
+        url = st.secrets["spreadsheet_url"]
+        # Use anonymous / API-key-free access for public sheets via gspread
+        gc  = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+        return gc.open_by_url(url)
     except Exception:
-        pass
-    return None
+        return None
+
+
+def _open_sheet_public():
+    """Open a PUBLIC Google Sheet without service account — read/write via API key."""
+    try:
+        import gspread
+        url = st.secrets["spreadsheet_url"]
+        gc  = gspread.Client(auth=None)
+        gc.session = requests.Session()
+        return gc.open_by_url(url)
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=5, show_spinner=False)
 def load_trades() -> pd.DataFrame:
-    conn = _get_conn()
-    if conn:
-        try:
-            df = conn.read(worksheet="Trades", ttl="0s")
-            if df is not None and not df.empty:
-                for col in TRADE_COLUMNS:
-                    if col not in df.columns:
-                        df[col] = ""
-                return df[TRADE_COLUMNS]
-        except Exception:
-            pass
+    try:
+        import gspread
+        url = st.secrets["spreadsheet_url"]
+        gc  = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+        ws  = gc.open_by_url(url).worksheet("Trades")
+        data = ws.get_all_records()
+        if data:
+            df = pd.DataFrame(data)
+            for col in TRADE_COLUMNS:
+                if col not in df.columns:
+                    df[col] = ""
+            return df[TRADE_COLUMNS]
+    except Exception:
+        pass
     return pd.DataFrame(columns=TRADE_COLUMNS)
 
 
 @st.cache_data(ttl=5, show_spinner=False)
 def load_capital() -> dict:
-    conn = _get_conn()
-    if conn:
-        try:
-            cdf = conn.read(worksheet="Capital", ttl="0s")
-            if cdf is not None and not cdf.empty:
-                row = cdf.iloc[0].to_dict()
-                hist_raw = row.get("history_json", "[]")
-                history  = json.loads(hist_raw) if isinstance(hist_raw, str) else []
-                return {
-                    "initial_capital": float(row.get("initial_capital", 40000.0)),
-                    "current_capital": float(row.get("current_capital", 40000.0)),
-                    "start_date":      str(row.get("start_date",      "2025-01-01")),
-                    "notes":           str(row.get("notes",           "")),
-                    "history":         history,
-                }
-        except Exception:
-            pass
+    try:
+        import gspread
+        url = st.secrets["spreadsheet_url"]
+        gc  = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+        ws  = gc.open_by_url(url).worksheet("Capital")
+        data = ws.get_all_records()
+        if data:
+            row      = data[0]
+            hist_raw = row.get("history_json", "[]")
+            history  = json.loads(hist_raw) if isinstance(hist_raw, str) else []
+            return {
+                "initial_capital": float(row.get("initial_capital", 40000.0)),
+                "current_capital": float(row.get("current_capital", 40000.0)),
+                "start_date":      str(row.get("start_date",      "2025-01-01")),
+                "notes":           str(row.get("notes",           "")),
+                "history":         history,
+            }
+    except Exception:
+        pass
     return {
         "initial_capital": 40000.0,
         "current_capital": 40000.0,
@@ -267,30 +285,36 @@ def load_capital() -> dict:
 
 
 def save_trades(df: pd.DataFrame):
-    conn = _get_conn()
-    if conn:
-        try:
-            conn.update(worksheet="Trades", data=df)
-            st.cache_data.clear()
-        except Exception as e:
-            st.error("Could not save to Google Sheets: {}".format(e))
+    try:
+        import gspread
+        url = st.secrets["spreadsheet_url"]
+        gc  = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+        ws  = gc.open_by_url(url).worksheet("Trades")
+        ws.clear()
+        ws.update([df.columns.tolist()] + df.fillna("").astype(str).values.tolist())
+        st.cache_data.clear()
+    except Exception as e:
+        st.error("Could not save to Google Sheets: {}".format(e))
 
 
 def save_capital(data: dict):
-    conn = _get_conn()
-    if conn:
-        try:
-            cdf = pd.DataFrame([{
-                "initial_capital": data.get("initial_capital", 40000.0),
-                "current_capital": data.get("current_capital", 40000.0),
-                "start_date":      data.get("start_date",      "2025-01-01"),
-                "notes":           data.get("notes",           ""),
-                "history_json":    json.dumps(data.get("history", [])),
-            }])
-            conn.update(worksheet="Capital", data=cdf)
-            st.cache_data.clear()
-        except Exception as e:
-            st.error("Could not save capital: {}".format(e))
+    try:
+        import gspread
+        url = st.secrets["spreadsheet_url"]
+        gc  = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+        ws  = gc.open_by_url(url).worksheet("Capital")
+        row = [
+            data.get("initial_capital", 40000.0),
+            data.get("current_capital", 40000.0),
+            data.get("start_date",      "2025-01-01"),
+            data.get("notes",           ""),
+            json.dumps(data.get("history", [])),
+        ]
+        ws.clear()
+        ws.update([["initial_capital","current_capital","start_date","notes","history_json"], row])
+        st.cache_data.clear()
+    except Exception as e:
+        st.error("Could not save capital: {}".format(e))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
