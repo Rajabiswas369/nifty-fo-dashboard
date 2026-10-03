@@ -470,6 +470,20 @@ elif page == "📓 Log Trade":
     # ── Recent Trades Log + Delete ─────────────────────────────────────────────
     st.markdown("---")
     st.subheader("📋 Recent Trades Log")
+
+    # ── Debug panel — shows raw Supabase response to diagnose read issues ──────
+    with st.expander("🔍 Debug: Supabase Raw Response", expanded=False):
+        try:
+            from cloud_data import _get_client, _is_cloud
+            if _is_cloud():
+                _dbg = _get_client().table("trades").select("*").limit(5).execute()
+                st.write("**Rows returned:**", len(_dbg.data))
+                st.json(_dbg.data)
+            else:
+                st.info("Not connected to Supabase.")
+        except Exception as _e:
+            st.error("Debug error: {}".format(_e))
+
     fresh_df = load_trades()
     if fresh_df.empty:
         st.info("No trades logged yet.")
