@@ -12,7 +12,7 @@ from io import BytesIO
 
 from cloud_data import (
     load_trades, add_trade, delete_trade, get_stats,
-    load_capital_history, update_capital, get_capital_stats,
+    load_capital_history, update_capital, add_capital_deposit, withdraw_capital, reset_capital, get_capital_stats,
     build_excel_report, _is_cloud,
     DEFAULT_BROKERAGE, DEFAULT_OTHER,
 )
@@ -85,6 +85,46 @@ if page == "📊 Dashboard":
     st.progress(min(int(rem_pct), 100),
                 text="{} Rs {:,.0f} of Rs {:,.0f} remaining ({:.1f}%)".format(
                     prog, cap_stats["current"], cap_stats["initial"], rem_pct))
+
+    # ── Inline capital editor ──────────────────────────────────────────────────
+    with st.expander("✏️ Edit / Fix Capital", expanded=False):
+        edit_tab1, edit_tab2 = st.tabs(["🔧 Set / Fix Initial Capital", "➕ Add Capital Deposit"])
+
+        with edit_tab1:
+            st.caption("⚠️ Use this to **correct the Initial Capital** shown above (currently shows Rs {:,.0f}). "
+                       "This wipes the history and sets a clean starting point.".format(cap_stats["initial"]))
+            with st.form("dash_reset_cap_form"):
+                dr1, dr2 = st.columns(2)
+                new_init = dr1.number_input(
+                    "Correct Initial Capital (Rs)",
+                    value=40000.0,
+                    step=1000.0, format="%.0f",
+                )
+                new_start_date = dr2.date_input("Trading Start Date", value=datetime.today())
+                if st.form_submit_button("⚠️ Reset & Set Initial Capital to Rs {:,.0f}".format(new_init), type="primary"):
+                    reset_capital(new_init, new_start_date.strftime("%Y-%m-%d"))
+                    st.success("✅ Initial capital reset to Rs {:,.0f}".format(new_init))
+                    st.rerun()
+
+        with edit_tab2:
+            st.caption("Added more money to your trading account? Enter **how much you deposited** — "
+                       "it will be added on top of your current balance of **Rs {:,.0f}**.".format(cap_stats["current"]))
+            with st.form("dash_deposit_form"):
+                dd1, dd2 = st.columns(2)
+                deposit_amt = dd1.number_input(
+                    "Amount Deposited (Rs)",
+                    value=0.0, min_value=0.0,
+                    step=1000.0, format="%.0f",
+                )
+                deposit_note = dd2.text_input("Note", placeholder="e.g. Added funds from bank")
+                st.info("New balance after deposit: **Rs {:,.0f}**".format(cap_stats["current"] + deposit_amt))
+                if st.form_submit_button("➕ Add Rs {:,.0f} to Capital".format(deposit_amt), type="primary"):
+                    if deposit_amt <= 0:
+                        st.error("Enter an amount greater than 0.")
+                    else:
+                        new_b = add_capital_deposit(deposit_amt, deposit_note)
+                        st.success("✅ Rs {:,.0f} added — New balance: Rs {:,.0f}".format(deposit_amt, new_b))
+                        st.rerun()
 
     st.markdown("---")
 
@@ -176,21 +216,62 @@ elif page == "💰 My Capital":
 
     st.markdown("---")
 
-    # Update balance form
-    with st.expander("⚙️ Update My Balance", expanded=False):
-        with st.form("cap_form"):
-            uf1, uf2 = st.columns(2)
-            new_bal  = uf1.number_input("New Balance (Rs)", value=float(cap_stats["current"]),
-                                         step=100.0, format="%.0f")
-            note_txt = uf2.text_input("Reason", placeholder="e.g. After today's trade")
-            if st.form_submit_button("💾 Update Balance"):
-                update_capital(new_bal, note_txt)
-                st.success("Balance updated to Rs {:,.0f}".format(new_bal))
+    # ── 3 action tabs ─────────────────────────────────────────────────────────
+    tab_dep, tab_wdraw, tab_reset = st.tabs([
+        "➕ Deposit Capital",
+        "➖ Withdraw Capital",
+        "🔧 Set / Fix Initial Capital",
+    ])
+
+    with tab_dep:
+        st.caption("Added more money to your trading account? Enter **how much you deposited** — "
+                   "it will be added on top of your current balance of **Rs {:,.0f}**.".format(cap_stats["current"]))
+        with st.form("cap_deposit_form"):
+            d1, d2 = st.columns(2)
+            dep_amt  = d1.number_input("Amount Deposited (Rs)", value=0.0, min_value=0.0,
+                                       step=1000.0, format="%.0f")
+            dep_note = d2.text_input("Note", placeholder="e.g. Added funds from bank")
+            st.info("New balance after deposit: **Rs {:,.0f}**".format(cap_stats["current"] + dep_amt))
+            if st.form_submit_button("➕ Add Deposit", type="primary"):
+                if dep_amt <= 0:
+                    st.error("Enter an amount greater than 0.")
+                else:
+                    new_b = add_capital_deposit(dep_amt, dep_note or "[DEPOSIT] Rs {:,.0f}".format(dep_amt))
+                    st.success("✅ Rs {:,.0f} deposited — New balance: Rs {:,.0f}".format(dep_amt, new_b))
+                    st.rerun()
+
+    with tab_wdraw:
+        st.caption("Withdrew money from your trading account? Enter **how much you took out** — "
+                   "it will be subtracted from your current balance of **Rs {:,.0f}**.".format(cap_stats["current"]))
+        with st.form("cap_withdraw_form"):
+            w1, w2 = st.columns(2)
+            wdraw_amt  = w1.number_input("Amount Withdrawn (Rs)", value=0.0, min_value=0.0,
+                                         step=1000.0, format="%.0f")
+            wdraw_note = w2.text_input("Note", placeholder="e.g. Withdrew for expenses")
+            st.info("New balance after withdrawal: **Rs {:,.0f}**".format(cap_stats["current"] - wdraw_amt))
+            if st.form_submit_button("➖ Record Withdrawal", type="primary"):
+                if wdraw_amt <= 0:
+                    st.error("Enter an amount greater than 0.")
+                else:
+                    new_b = withdraw_capital(wdraw_amt, wdraw_note or "[WITHDRAWAL] Rs {:,.0f}".format(wdraw_amt))
+                    st.success("✅ Rs {:,.0f} withdrawn — New balance: Rs {:,.0f}".format(wdraw_amt, new_b))
+                    st.rerun()
+
+    with tab_reset:
+        st.caption("⚠️ Use this ONLY to **fix a wrong Initial Capital**. "
+                   "It wipes all history and sets a clean starting point.")
+        with st.form("cap_reset_form"):
+            rf1, rf2 = st.columns(2)
+            init_val  = rf1.number_input("Correct Initial Capital (Rs)", value=40000.0, step=1000.0, format="%.0f")
+            init_date = rf2.date_input("Trading Start Date", value=datetime.today())
+            if st.form_submit_button("⚠️ Reset & Set Initial Capital", type="primary"):
+                reset_capital(init_val, init_date.strftime("%Y-%m-%d"))
+                st.success("✅ Capital reset to Rs {:,.0f}".format(init_val))
                 st.rerun()
 
     st.markdown("---")
 
-    # Capital history chart
+    # ── Capital history chart ──────────────────────────────────────────────────
     hist = cap_stats.get("history", [])
     if hist:
         hdf = pd.DataFrame(hist)
@@ -217,9 +298,35 @@ elif page == "💰 My Capital":
                            margin=dict(l=0, r=0, t=40, b=0))
         st.plotly_chart(fig2, use_container_width=True)
 
-        st.subheader("📋 Balance History")
-        st.dataframe(hdf[["Date","Balance","Note"]].sort_values("Date", ascending=False),
-                     use_container_width=True, hide_index=True)
+        # ── Colour-coded transaction history ──────────────────────────────────
+        st.subheader("📋 Transaction History")
+        disp = hdf[["Date", "Balance", "Note"]].sort_values("Date", ascending=False).copy()
+        disp["Date"] = disp["Date"].dt.strftime("%d %b %Y")
+
+        def _row_type(note):
+            n = str(note).upper()
+            if "DEPOSIT" in n:       return "➕ Deposit"
+            if "WITHDRAWAL" in n:    return "➖ Withdrawal"
+            if "INITIAL" in n:       return "🏁 Initial"
+            if "TRADE" in n:         return "📈 Trade"
+            return "📝 Manual"
+
+        def _row_color(note):
+            n = str(note).upper()
+            if "DEPOSIT" in n:    return "color: #26a69a"   # green
+            if "WITHDRAWAL" in n: return "color: #ef5350"   # red
+            if "INITIAL" in n:    return "color: #f0a500"   # amber
+            return ""
+
+        disp.insert(0, "Type", disp["Note"].apply(_row_type))
+
+        st.dataframe(
+            disp.style.apply(
+                lambda row: [_row_color(row["Note"])] * len(row), axis=1
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     # 30-day projection
     st.markdown("---")
