@@ -1286,13 +1286,18 @@ elif page == "🔄 Angel One Sync":
     with st.expander("🔍 Debug: What secrets are loaded?", expanded=True):
         try:
             all_keys = list(st.secrets.keys())
-            st.write("**Top-level secret keys found:**", all_keys)
-            for k in ["angel_api_key", "angel_client_id", "angel_mpin", "angel_totp_key"]:
-                if k in st.secrets:
-                    val = st.secrets[k]
-                    st.success("✅ {} = {}...".format(k, str(val)[:4]))
-                else:
-                    st.error("❌ {} — NOT FOUND".format(k))
+            st.write("**Top-level keys:**", all_keys)
+            # Check [angel] section
+            if "angel" in st.secrets:
+                angel_keys = list(st.secrets["angel"].keys())
+                st.write("**Keys inside [angel] section:**", angel_keys)
+                for k in ["api_key", "client_id", "mpin", "totp_key"]:
+                    if k in st.secrets["angel"]:
+                        st.success("✅ angel.{} = {}...".format(k, str(st.secrets["angel"][k])[:4]))
+                    else:
+                        st.error("❌ angel.{} — NOT FOUND".format(k))
+            else:
+                st.warning("No [angel] section found")
         except Exception as ex:
             st.error("Error reading secrets: {}".format(ex))
     st.markdown("---")
