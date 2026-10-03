@@ -1281,6 +1281,22 @@ elif page == "🔄 Angel One Sync":
     st.title("🔄 Angel One Auto-Sync")
     st.caption("Automatically fetch your executed trades from Angel One — no manual entry needed!")
     st.markdown("---")
+
+    # ── Secrets debug panel ──────────────────────────────────────────────────
+    with st.expander("🔍 Debug: What secrets are loaded?", expanded=True):
+        try:
+            all_keys = list(st.secrets.keys())
+            st.write("**Top-level secret keys found:**", all_keys)
+            for k in ["angel_api_key", "angel_client_id", "angel_mpin", "angel_totp_key"]:
+                if k in st.secrets:
+                    val = st.secrets[k]
+                    st.success("✅ {} = {}...".format(k, str(val)[:4]))
+                else:
+                    st.error("❌ {} — NOT FOUND".format(k))
+        except Exception as ex:
+            st.error("Error reading secrets: {}".format(ex))
+    st.markdown("---")
+
     render_angel_sync_panel(load_fn=load_trades, save_fn=save_trades, columns=TRADE_COLUMNS)
 
 
