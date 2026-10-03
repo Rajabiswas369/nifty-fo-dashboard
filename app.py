@@ -1,30 +1,20 @@
 """
-Nifty F&O Unified Cloud Dashboard & Trading Journal
-====================================================
-All-in-one Streamlit Cloud App:
+Nifty F&O Signal Dashboard
+===========================
   📈 Live Signal Dashboard    — RSI, ADX, Supertrend, MACD, VWAP, trade decision, interactive charts
   📰 Market News & Verdict    — Should I trade today? 9-Gate checks + live headlines + events calendar
-  📊 My Records Dashboard     — Capital growth, win/loss stats, equity curve
-  💰 My Capital               — Capital tracker, reset starting balance, deposits, withdrawals
-  📓 Log Trade                — Manual trade entry + live journal table + instant delete option
-  🔄 Angel One Sync           — Auto-fetch executed trades from Angel One
-  📋 All Trades               — View, filter, and inspect all trades
-  📅 Monthly Report           — Monthly P&L calendar & breakdowns
-  📈 Performance              — Win rate by symbol, option type, RSI zone
-  💸 Expenses                 — Brokerage, STT, and charges breakdown
-  ⬇️ Export                   — Download Excel & CSV reports
 
-Data stored permanently in Supabase Cloud.
+This app is purely for TRADING SIGNALS & MARKET ANALYSIS.
+For trade records, capital management, and reporting go to the Records app.
+
+Data via yfinance. Educational use only.
 """
 
 import os
-import json
-import traceback
+import requests
 import pandas as pd
 import numpy as np
-import requests
 from datetime import datetime, date, timedelta
-from io import BytesIO
 from xml.etree import ElementTree as ET
 
 import streamlit as st
@@ -34,55 +24,15 @@ import pytz
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Nifty F&O All-in-One Dashboard",
+    page_title="Nifty F&O Signal Dashboard",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ═════════════════════════════════════════════════════════════════════════════
-# CONSTANTS & CONFIG
+# CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
-COLUMNS = [
-    "Trade #", "Date", "Time", "Symbol", "Option Type", "Strike", "Expiry",
-    "Entry Price", "Exit Price", "Lots", "Lot Size", "Capital Used",
-    "Gross P&L", "Brokerage", "STT", "Other Charges", "Net P&L", "Result",
-    "Hold Time", "Entry RSI", "Entry ADX", "Supertrend", "Dashboard Said",
-    "Lessons Learned", "Notes",
-]
-DEFAULT_BROKERAGE = 40.0
-DEFAULT_STT_PCT   = 0.05
-DEFAULT_OTHER     = 15.0
-
-COL_TO_DB = {
-    "Trade #":        "trade_num",
-    "Date":           "date",
-    "Time":           "time",
-    "Symbol":         "symbol",
-    "Option Type":    "option_type",
-    "Strike":         "strike",
-    "Expiry":         "expiry",
-    "Entry Price":    "entry_price",
-    "Exit Price":     "exit_price",
-    "Lots":           "lots",
-    "Lot Size":       "lot_size",
-    "Capital Used":   "capital_used",
-    "Gross P&L":      "gross_pnl",
-    "Brokerage":      "brokerage",
-    "STT":            "stt",
-    "Other Charges":  "other_charges",
-    "Net P&L":        "net_pnl",
-    "Result":         "result",
-    "Hold Time":      "hold_time",
-    "Entry RSI":      "entry_rsi",
-    "Entry ADX":      "entry_adx",
-    "Supertrend":     "supertrend",
-    "Dashboard Said": "dashboard_said",
-    "Lessons Learned":"lessons_learned",
-    "Notes":          "notes",
-}
-DB_TO_COL = {v: k for k, v in COL_TO_DB.items()}
-
 NSE_SYMBOLS = {
     "NIFTY50":    "^NSEI",
     "BANKNIFTY":  "^NSEBANK",
@@ -146,189 +96,12 @@ WEEKDAY_NOTES = {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SUPABASE HELPERS
-# ═════════════════════════════════════════════════════════════════════════════
-def _is_cloud() -> bool:
-    try:
-        return "supabase_url" in st.secrets and "supabase_key" in st.secrets
-    except Exception:
-        return False
-
-
-def _get_client():
-    from supabase import create_client
-    return create_client(st.secrets["supabase_url"], st.secrets["supabase_key"])
-
-
-@st.cache_data(ttl=10, show_spinner=False)
-def load_trades() -> pd.DataFrame:
-    if not _is_cloud():
-        if "trades_df" not in st.session_state:
-            st.session_state.trades_df = pd.DataFrame(columns=COLUMNS)
-        return st.session_state.trades_df.copy()
-    try:
-        client = _get_client()
-        resp   = client.table("trades").select("*").order("trade_num").execute()
-        data   = resp.data
-        if not data:
-            return pd.DataFrame(columns=COLUMNS)
-        df = pd.DataFrame(data).rename(columns=DB_TO_COL)
-        for col in COLUMNS:
-            if col not in df.columns:
-                df[col] = ""
-        return df[COLUMNS]
-    except Exception as e:
-        st.warning("Could not load trades: {}".format(e))
-        return pd.DataFrame(columns=COLUMNS)
-
-
-@st.cache_data(ttl=10, show_spinner=False)
-def load_capital() -> dict:
-    default = {
-        "initial_capital": 40000.0, "current_capital": 40000.0,
-        "start_date": "2025-01-01", "notes": "Started trading Nifty F&O",
-        "history": [{"date": "2025-01-01", "balance": 40000.0, "note": "Initial capital"}],
-    }
-    if not _is_cloud():
-        return st.session_state.get("capital_data", default)
-    try:
-        client = _get_client()
-        resp   = client.table("capital").select("*").order("date").execute()
-        data   = resp.data
-        if not data:
-            return default
-        history = [{"date": r.get("date", ""), "balance": float(r.get("balance", 40000)),
-                    "note": r.get("note", "")} for r in data]
-        initial = float(data[0].get("balance", 40000.0))
-        current = float(data[-1].get("balance", 40000.0))
-        return {
-            "initial_capital": initial,
-            "current_capital": current,
-            "start_date":      data[0].get("date", "2025-01-01"),
-            "notes":           data[-1].get("note", ""),
-            "history":         history,
-        }
-    except Exception as e:
-        return default
-
-
-def save_trades(df: pd.DataFrame):
-    load_trades.clear()
-    if not _is_cloud():
-        st.session_state.trades_df = df.copy()
-        return
-    client = _get_client()
-    try:
-        client.table("trades").delete().gte("trade_num", 0).execute()
-        if not df.empty:
-            rows = df.copy().rename(columns=COL_TO_DB)
-            db_cols = list(COL_TO_DB.values())
-            rows = rows[[c for c in db_cols if c in rows.columns]]
-            num_cols = ["trade_num", "strike", "entry_price", "exit_price",
-                        "lots", "lot_size", "capital_used", "gross_pnl",
-                        "brokerage", "stt", "other_charges", "net_pnl",
-                        "entry_rsi", "entry_adx"]
-            for col in num_cols:
-                if col in rows.columns:
-                    rows[col] = pd.to_numeric(rows[col], errors="coerce")
-            rows = rows.where(pd.notnull(rows), None)
-            recs = rows.to_dict("records")
-            for r in recs:
-                client.table("trades").insert(r).execute()
-    except Exception as e:
-        st.error("❌ Supabase write failed: {}".format(e))
-
-
-def save_capital(data: dict):
-    load_capital.clear()
-    if not _is_cloud():
-        st.session_state.capital_data = data
-        return
-    client = _get_client()
-    try:
-        client.table("capital").delete().neq("date", "1900-01-01").execute()
-        history = data.get("history", [])
-        if not history:
-            history = [{"date": data.get("start_date", "2025-01-01"),
-                        "balance": data.get("initial_capital", 40000.0),
-                        "note": "Initial capital"}]
-        recs = [{"date": str(h.get("date", "")), "balance": float(h.get("balance", 40000.0)),
-                 "note": str(h.get("note", ""))} for h in history]
-        if recs:
-            client.table("capital").insert(recs).execute()
-    except Exception as e:
-        st.error("❌ Supabase capital write failed: {}".format(e))
-
-
-def get_stats(df: pd.DataFrame) -> dict:
-    if df.empty:
-        return {k: 0 for k in ["total_trades", "wins", "losses", "win_rate", "total_pnl",
-                               "avg_win", "avg_loss", "best_trade", "worst_trade", "reward_risk"]}
-    closed = df[df["Result"].isin(["WIN", "LOSS"])].copy()
-    if closed.empty:
-        return {k: 0 for k in ["total_trades", "wins", "losses", "win_rate", "total_pnl",
-                               "avg_win", "avg_loss", "best_trade", "worst_trade", "reward_risk"]}
-    pnl = pd.to_numeric(closed["Net P&L"], errors="coerce").fillna(0)
-    w   = pnl[pnl > 0]
-    l   = pnl[pnl < 0]
-    wins = len(w); losses = len(l)
-    avg_w = float(w.mean()) if wins else 0.0
-    avg_l = float(l.mean()) if losses else 0.0
-    rr    = round(abs(avg_w / avg_l), 2) if avg_l != 0 else 0.0
-    return {
-        "total_trades": len(closed),
-        "wins":         wins,
-        "losses":       losses,
-        "win_rate":     round(wins / len(closed) * 100, 1) if len(closed) else 0.0,
-        "total_pnl":    round(float(pnl.sum()), 2),
-        "avg_win":      round(avg_w, 2),
-        "avg_loss":     round(avg_l, 2),
-        "best_trade":   round(float(pnl.max()), 2) if len(pnl) else 0.0,
-        "worst_trade":  round(float(pnl.min()), 2) if len(pnl) else 0.0,
-        "reward_risk":  rr,
-    }
-
-
-def get_capital_stats(data: dict) -> dict:
-    initial = float(data.get("initial_capital", 40000.0))
-    current = float(data.get("current_capital", 40000.0))
-    pnl     = round(current - initial, 2)
-    pct     = round((pnl / initial) * 100, 2) if initial else 0.0
-    try:
-        d0   = datetime.strptime(str(data.get("start_date", "2025-01-01")), "%Y-%m-%d").date()
-        days = max((datetime.now().date() - d0).days, 0)
-    except Exception:
-        days = 0
-    return {"initial": initial, "current": current, "pnl": pnl, "pnl_pct": pct,
-            "days": days, "history": data.get("history", [])}
-
-
-def pnl_delta(val):
-    d  = ("▲ Rs {:,.0f}".format(val) if val >= 0 else "▼ Rs {:,.0f}".format(abs(val)))
-    dc = "normal" if val >= 0 else "inverse"
-    return d, dc
-
-
-from angel_sync import render_angel_sync_panel, is_angel_configured
-
-# ═════════════════════════════════════════════════════════════════════════════
 # SIDEBAR NAVIGATION
 # ═════════════════════════════════════════════════════════════════════════════
 st.sidebar.image("https://img.icons8.com/color/96/combo-chart.png", width=56)
-st.sidebar.title("Nifty F&O AI Trader")
+st.sidebar.title("Nifty F&O Signal Dashboard")
 st.sidebar.markdown("---")
-
-if _is_cloud():
-    st.sidebar.success("☁️ Storage: **Supabase Cloud (Live)**")
-else:
-    st.sidebar.warning("💻 Running locally — memory only")
-
-angel_ok = is_angel_configured()
-if angel_ok:
-    st.sidebar.success("✅ Angel One **Configured**")
-else:
-    st.sidebar.info("ℹ️ Angel One not configured")
-
+st.sidebar.info("📊 **This app:** Live signals, indicators & news.\n\n💼 For trade records & capital, use the Records app.")
 st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
@@ -336,58 +109,37 @@ page = st.sidebar.radio(
     [
         "📈 Signal Dashboard",
         "📰 Market News & Verdict",
-        "📊 My Records Dashboard",
-        "💰 My Capital",
-        "📓 Log Trade",
-        "🔄 Angel One Sync",
-        "📋 All Trades",
-        "📅 Monthly Report",
-        "📈 Performance",
-        "💸 Expenses",
-        "⬇️ Export",
     ],
     index=0,
 )
 st.sidebar.markdown("---")
 
-# Controls for Signal Dashboard
-if page in ("📈 Signal Dashboard", "📰 Market News & Verdict"):
-    symbol   = st.sidebar.selectbox("Symbol", list(NSE_SYMBOLS.keys()), index=0)
-    interval = st.sidebar.selectbox("Timeframe", ["1d", "1h", "15m", "5m"], index=0)
-    period_map = {"1d": ["6mo", "1y", "2y", "5y"], "1h": ["1mo", "3mo", "6mo"],
-                  "15m": ["5d", "1mo", "2mo"], "5m": ["5d", "1mo"]}
-    period = st.sidebar.selectbox("Period", period_map[interval], index=1)
-    show_supertrend = st.sidebar.checkbox("Show Supertrend",      value=True)
-    show_bb         = st.sidebar.checkbox("Show Bollinger Bands", value=True)
-    show_adx        = st.sidebar.checkbox("Show ADX Panel",       value=True)
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**Watchlist**")
-    watchlist = st.sidebar.multiselect(
-        "Monitor symbols", list(NSE_SYMBOLS.keys()),
-        default=["NIFTY50", "BANKNIFTY", "RELIANCE", "HDFCBANK"],
-    )
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**Capital & Risk Settings**")
-    total_capital  = st.sidebar.number_input("Total Capital (Rs)", min_value=5000, value=50000, step=5000)
-    risk_per_trade = st.sidebar.slider("Max Risk Per Trade (%)", 1, 5, 2)
-    lot_size       = st.sidebar.number_input("Lot Size", min_value=1, value=75, step=1,
-                                             help="NIFTY=75, BANKNIFTY=30")
-    st.sidebar.markdown("---")
-    manual_event = st.sidebar.text_input("⚡ Manual Event Override",
-                                         placeholder="e.g. RBI rate decision",
-                                         help="Forces NO TRADE warning if filled")
-    refresh = st.sidebar.button("🔄 Refresh Data")
-else:
-    symbol = "NIFTY50"; interval = "1d"; period = "1y"
-    total_capital = 50000; risk_per_trade = 2; lot_size = 75
-    watchlist = []; manual_event = ""; refresh = False
-
-# ── Load persistent data ───────────────────────────────────────────────────────
-trades_df = load_trades()
-cap_data  = load_capital()
-stats     = get_stats(trades_df)
-cap_stats = get_capital_stats(cap_data)
-closed_df = trades_df[trades_df["Result"].isin(["WIN", "LOSS"])].copy() if not trades_df.empty else pd.DataFrame()
+# Controls for all pages
+symbol   = st.sidebar.selectbox("Symbol", list(NSE_SYMBOLS.keys()), index=0)
+interval = st.sidebar.selectbox("Timeframe", ["1d", "1h", "15m", "5m"], index=0)
+period_map = {"1d": ["6mo", "1y", "2y", "5y"], "1h": ["1mo", "3mo", "6mo"],
+              "15m": ["5d", "1mo", "2mo"], "5m": ["5d", "1mo"]}
+period = st.sidebar.selectbox("Period", period_map[interval], index=1)
+show_supertrend = st.sidebar.checkbox("Show Supertrend",      value=True)
+show_bb         = st.sidebar.checkbox("Show Bollinger Bands", value=True)
+show_adx        = st.sidebar.checkbox("Show ADX Panel",       value=True)
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Watchlist**")
+watchlist = st.sidebar.multiselect(
+    "Monitor symbols", list(NSE_SYMBOLS.keys()),
+    default=["NIFTY50", "BANKNIFTY", "RELIANCE", "HDFCBANK"],
+)
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Capital & Risk Settings**")
+total_capital  = st.sidebar.number_input("Total Capital (Rs)", min_value=5000, value=50000, step=5000)
+risk_per_trade = st.sidebar.slider("Max Risk Per Trade (%)", 1, 5, 2)
+lot_size       = st.sidebar.number_input("Lot Size", min_value=1, value=75, step=1,
+                                         help="NIFTY=75, BANKNIFTY=30")
+st.sidebar.markdown("---")
+manual_event = st.sidebar.text_input("⚡ Manual Event Override",
+                                     placeholder="e.g. RBI rate decision",
+                                     help="Forces NO TRADE warning if filled")
+refresh = st.sidebar.button("🔄 Refresh Data")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -884,8 +636,8 @@ if page == "📈 Signal Dashboard":
     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["RSI"], name="RSI",
                              line=dict(color="#3498db", width=1.5)), row=2, col=1)
     fig.add_hrect(y0=65, y1=100, fillcolor="rgba(239,83,80,0.08)", line_width=0, row=2, col=1)
-    fig.add_hrect(y0=0, y1=35, fillcolor="rgba(38,166,154,0.08)", line_width=0, row=2, col=1)
-    fig.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.4, row=2, col=1)
+    fig.add_hrect(y0=0,  y1=35,  fillcolor="rgba(38,166,154,0.08)", line_width=0, row=2, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="red",   opacity=0.4, row=2, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.4, row=2, col=1)
     colors_hist = ["#26a69a" if v >= 0 else "#ef5350" for v in df_chart["MACD_hist"]]
     fig.add_trace(go.Bar(x=df_chart.index, y=df_chart["MACD_hist"], name="Histogram",
@@ -902,9 +654,9 @@ if page == "📈 Signal Dashboard":
                       showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, x=1),
                       margin=dict(l=0, r=0, t=30, b=0))
     fig.update_yaxes(title_text="Price (Rs)", row=1, col=1)
-    fig.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
-    fig.update_yaxes(title_text="MACD", row=3, col=1)
-    fig.update_yaxes(title_text="Volume", row=4, col=1)
+    fig.update_yaxes(title_text="RSI",        row=2, col=1, range=[0, 100])
+    fig.update_yaxes(title_text="MACD",       row=3, col=1)
+    fig.update_yaxes(title_text="Volume",     row=4, col=1)
     st.plotly_chart(fig, use_container_width=True)
     st.markdown("---")
 
@@ -1075,518 +827,5 @@ elif page == "📰 Market News & Verdict":
             st.success("✅ No high-impact headlines. Market news appears routine today.")
     st.caption("News via Google News RSS. Educational only. Not financial advice.")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ██  PAGE: 📊 MY RECORDS DASHBOARD
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "📊 My Records Dashboard":
-    st.title("📊 My Trading Dashboard")
-    st.markdown("---")
-
-    rem_pct = (cap_stats["current"] / cap_stats["initial"] * 100) if cap_stats["initial"] else 0
-    rem_pct_safe = max(0, min(int(rem_pct), 100))
-    cap_d, cap_dc = pnl_delta(cap_stats["pnl"])
-    cc1, cc2, cc3, cc4, cc5 = st.columns(5)
-    cc1.metric("💰 Initial Capital",  "Rs {:,.0f}".format(cap_stats["initial"]))
-    cc2.metric("💵 Current Balance",  "Rs {:,.0f}".format(cap_stats["current"]), cap_d, delta_color=cap_dc)
-    cc3.metric("📉 P&L",              "Rs {:,.0f}".format(cap_stats["pnl"]),
-               "{:.1f}%".format(cap_stats["pnl_pct"]),
-               delta_color="normal" if cap_stats["pnl"] >= 0 else "inverse")
-    cc4.metric("📅 Days Trading",     "{} days".format(cap_stats["days"]))
-    cc5.metric("🏦 Capital Left",     "{:.1f}%".format(rem_pct),
-               delta_color="normal" if rem_pct >= 80 else "inverse")
-
-    prog = "🟢" if rem_pct >= 80 else ("🟡" if rem_pct >= 60 else "🔴")
-    st.progress(rem_pct_safe,
-                text="{} Rs {:,.0f} of Rs {:,.0f} remaining ({:.1f}%)".format(
-                    prog, cap_stats["current"], cap_stats["initial"], rem_pct))
-
-    with st.expander("✏️ Edit / Fix Capital", expanded=False):
-        edit_tab1, edit_tab2 = st.tabs(["🔧 Set / Fix Initial Capital", "➕ Add Capital Deposit"])
-
-        with edit_tab1:
-            st.caption("⚠️ Use this to **correct the Initial Capital** shown above (currently shows Rs {:,.0f}).".format(cap_stats["initial"]))
-            with st.form("dash_reset_cap_form"):
-                dr1, dr2 = st.columns(2)
-                new_init = dr1.number_input(
-                    "Correct Initial Capital (Rs)",
-                    value=float(cap_stats["initial"]) if cap_stats["initial"] else 40000.0,
-                    step=1000.0, format="%.0f",
-                )
-                new_start_date = dr2.date_input("Trading Start Date", value=datetime.today())
-                if st.form_submit_button("⚠️ Reset & Set Initial Capital to Rs {:,.0f}".format(new_init), type="primary"):
-                    fresh = load_capital()
-                    fresh["initial_capital"] = float(new_init)
-                    fresh["current_capital"] = float(new_init)
-                    fresh["start_date"]      = new_start_date.strftime("%Y-%m-%d")
-                    fresh["history"]         = [{"date": new_start_date.strftime("%Y-%m-%d"),
-                                                 "balance": float(new_init), "note": "Initial capital reset"}]
-                    save_capital(fresh)
-                    st.success("✅ Initial capital reset to Rs {:,.0f}".format(new_init))
-                    st.rerun()
-
-        with edit_tab2:
-            st.caption("Added more money to your trading account? Enter **how much you deposited**.")
-            with st.form("dash_deposit_form"):
-                dd1, dd2 = st.columns(2)
-                deposit_amt = dd1.number_input(
-                    "Amount Deposited (Rs)",
-                    value=0.0, min_value=0.0,
-                    step=1000.0, format="%.0f",
-                )
-                deposit_note = dd2.text_input("Note", placeholder="e.g. Added funds from bank")
-                if st.form_submit_button("➕ Add Rs {:,.0f} to Capital".format(deposit_amt), type="primary"):
-                    if deposit_amt <= 0:
-                        st.error("Enter an amount greater than 0.")
-                    else:
-                        fresh = load_capital()
-                        new_bal = round(float(fresh.get("current_capital", 40000.0)) + deposit_amt, 2)
-                        fresh["current_capital"] = new_bal
-                        fresh["history"] = fresh.get("history", []) + [{
-                            "date": datetime.now().strftime("%Y-%m-%d"),
-                            "balance": new_bal,
-                            "note": deposit_note or "Deposit Rs {:,.0f}".format(deposit_amt)
-                        }]
-                        save_capital(fresh)
-                        st.success("✅ Rs {:,.0f} added — New balance: Rs {:,.0f}".format(deposit_amt, new_bal))
-                        st.rerun()
-
-    st.markdown("---")
-
-    # Trade KPIs
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Total Trades", stats["total_trades"])
-    k2.metric("Win Rate",     "{:.1f}%".format(stats["win_rate"]))
-    d, dc = pnl_delta(stats["total_pnl"])
-    k3.metric("Net P&L",      "Rs {:,.0f}".format(stats["total_pnl"]), d, delta_color=dc)
-    k4.metric("Reward:Risk",  "{:.2f}x".format(stats["reward_risk"]))
-
-    k5, k6, k7, k8 = st.columns(4)
-    k5.metric("Wins",       stats["wins"])
-    k6.metric("Losses",     stats["losses"])
-    k7.metric("Best Trade", "Rs {:,.0f}".format(stats["best_trade"]))
-    k8.metric("Worst Trade", "Rs {:,.0f}".format(stats["worst_trade"]))
-
-    st.markdown("---")
-
-    if not closed_df.empty:
-        pnl_s = pd.to_numeric(closed_df["Net P&L"], errors="coerce").fillna(0)
-        left, right = st.columns([3, 2])
-        with left:
-            st.subheader("📈 Cumulative P&L Growth")
-            cum = pnl_s.cumsum()
-            fig_pnl = go.Figure()
-            fig_pnl.add_trace(go.Scatter(
-                x=list(range(1, len(cum) + 1)), y=cum,
-                mode="lines+markers",
-                line=dict(color="#26a69a" if cum.iloc[-1] >= 0 else "#ef5350", width=2.5),
-                fill="tozeroy",
-                fillcolor="rgba(38,166,154,0.1)" if cum.iloc[-1] >= 0 else "rgba(239,83,80,0.1)",
-                name="Cumulative P&L",
-            ))
-            fig_pnl.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
-            fig_pnl.update_layout(
-                xaxis_title="Trade Number", yaxis_title="Net P&L (Rs)",
-                template="plotly_dark", height=320,
-                margin=dict(l=0, r=0, t=20, b=0),
-            )
-            st.plotly_chart(fig_pnl, use_container_width=True)
-
-        with right:
-            st.subheader("🎯 Win / Loss Ratio")
-            fig_pie = go.Figure(go.Pie(
-                labels=["Wins", "Losses"],
-                values=[stats["wins"], stats["losses"]],
-                hole=0.55,
-                marker=dict(colors=["#26a69a", "#ef5350"]),
-            ))
-            fig_pie.update_layout(
-                template="plotly_dark", height=320,
-                margin=dict(l=0, r=0, t=20, b=0),
-                showlegend=True,
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-        st.subheader("📋 Recent 5 Trades")
-        rc = ["Trade #", "Date", "Symbol", "Option Type", "Strike",
-              "Entry Price", "Exit Price", "Lots", "Net P&L", "Result"]
-        st.dataframe(closed_df[rc].tail(5).sort_index(ascending=False),
-                     use_container_width=True, hide_index=True)
-    else:
-        st.info("No closed trades yet. Go to **📓 Log Trade** to record your first trade!")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ██  PAGE: 💰 MY CAPITAL
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "💰 My Capital":
-    st.title("💰 Capital Tracker & Balance History")
-    st.caption("Auto-updated on every closed trade. Deposit or withdraw funds anytime.")
-    st.markdown("---")
-
-    rem_pct = (cap_stats["current"] / cap_stats["initial"] * 100) if cap_stats["initial"] else 0
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Initial Capital",  "Rs {:,.0f}".format(cap_stats["initial"]))
-    d, dc = pnl_delta(cap_stats["pnl"])
-    c2.metric("Current Balance",  "Rs {:,.0f}".format(cap_stats["current"]), d, delta_color=dc)
-    c3.metric("Growth %",         "{:+.1f}%".format(cap_stats["pnl_pct"]),
-              delta_color="normal" if cap_stats["pnl"] >= 0 else "inverse")
-    c4.metric("Days Active",      "{} days".format(cap_stats["days"]))
-
-    st.markdown("---")
-
-    tab_dep, tab_wd, tab_set, tab_hist = st.tabs([
-        "➕ Add Deposit", "➖ Withdraw Funds", "🔧 Set / Fix Initial Capital", "📜 Full History"
-    ])
-
-    with tab_dep:
-        st.subheader("Add Funds to Trading Account")
-        with st.form("deposit_form"):
-            dep_amt  = st.number_input("Deposit Amount (Rs)", min_value=100.0, value=5000.0, step=500.0)
-            dep_note = st.text_input("Note", placeholder="e.g. Added funds from salary")
-            if st.form_submit_button("➕ Add Deposit", type="primary"):
-                fresh = load_capital()
-                new_bal = round(float(fresh.get("current_capital", 40000.0)) + dep_amt, 2)
-                fresh["current_capital"] = new_bal
-                fresh["history"] = fresh.get("history", []) + [{
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "balance": new_bal,
-                    "note": dep_note or "Deposit Rs {:,.0f}".format(dep_amt)
-                }]
-                save_capital(fresh)
-                st.success("✅ Deposit of Rs {:,.0f} saved! New balance: Rs {:,.0f}".format(dep_amt, new_bal))
-                st.rerun()
-
-    with tab_wd:
-        st.subheader("Withdraw Funds from Trading Account")
-        with st.form("withdraw_form"):
-            wd_amt  = st.number_input("Withdrawal Amount (Rs)", min_value=100.0, value=2000.0, step=500.0)
-            wd_note = st.text_input("Note", placeholder="e.g. Profit payout to bank")
-            if st.form_submit_button("➖ Record Withdrawal", type="secondary"):
-                fresh = load_capital()
-                new_bal = round(float(fresh.get("current_capital", 40000.0)) - wd_amt, 2)
-                fresh["current_capital"] = new_bal
-                fresh["history"] = fresh.get("history", []) + [{
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "balance": new_bal,
-                    "note": wd_note or "Withdrawal Rs {:,.0f}".format(wd_amt)
-                }]
-                save_capital(fresh)
-                st.success("✅ Withdrawal of Rs {:,.0f} recorded! New balance: Rs {:,.0f}".format(wd_amt, new_bal))
-                st.rerun()
-
-    with tab_set:
-        st.subheader("Reset / Fix Starting Capital")
-        st.caption("Use this if your starting capital was recorded incorrectly.")
-        with st.form("reset_form"):
-            r_cap  = st.number_input("Starting Capital (Rs)", min_value=1000.0, value=40000.0, step=1000.0)
-            r_date = st.date_input("Start Date", value=datetime.today())
-            if st.form_submit_button("⚠️ Reset Starting Capital", type="primary"):
-                fresh = load_capital()
-                fresh["initial_capital"] = float(r_cap)
-                fresh["current_capital"] = float(r_cap)
-                fresh["start_date"]      = r_date.strftime("%Y-%m-%d")
-                fresh["history"]         = [{"date": r_date.strftime("%Y-%m-%d"),
-                                             "balance": float(r_cap), "note": "Initial capital reset"}]
-                save_capital(fresh)
-                st.success("✅ Capital reset to Rs {:,.0f} as of {}".format(r_cap, r_date))
-                st.rerun()
-
-    with tab_hist:
-        st.subheader("Capital Log")
-        hist = cap_data.get("history", [])
-        if hist:
-            st.dataframe(pd.DataFrame(hist).sort_index(ascending=False), use_container_width=True, hide_index=True)
-        else:
-            st.info("No capital history found.")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ██  PAGE: 📓 LOG TRADE
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "📓 Log Trade":
-    st.title("📓 Manual Trade Entry")
-    st.caption("Record your trade with full risk analytics & lessons learned.")
-    st.markdown("---")
-
-    with st.form("log_trade_form", clear_on_submit=True):
-        r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-        f_symbol = r1c1.selectbox("Symbol", list(NSE_SYMBOLS.keys()), index=0, key="lt_sym")
-        f_type   = r1c2.selectbox("Option Type", ["PUT", "CALL"], key="lt_type")
-        f_strike = r1c3.number_input("Strike Price", value=24000, step=50, key="lt_strike")
-        f_expiry = r1c4.text_input("Expiry Date", value=datetime.today().strftime("%Y-%m-%d"), key="lt_exp")
-
-        r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-        f_entry = r2c1.number_input("Entry Price (Rs)", value=100.0, step=0.5, format="%.2f", key="lt_entry")
-        f_exit  = r2c2.number_input("Exit Price (Rs, 0 if OPEN)", value=0.0, step=0.5, format="%.2f", key="lt_exit")
-        f_lots  = r2c3.number_input("Lots", min_value=1, value=1, step=1, key="lt_lots")
-        f_size  = r2c4.number_input("Lot Size", min_value=1, value=75, step=1, key="lt_size")
-
-        st.markdown("**Technical Indicators at Entry**")
-        m1, m2, m3, m4 = st.columns(4)
-        f_rsi   = m1.number_input("RSI at Entry", value=50.0, step=0.1, format="%.1f", min_value=0.0, max_value=100.0, key="lt_rsi")
-        f_adx   = m2.number_input("ADX at Entry", value=25.0, step=0.1, format="%.1f", min_value=0.0, max_value=100.0, key="lt_adx")
-        f_st    = m3.selectbox("Supertrend", ["BEARISH", "BULLISH"], key="lt_st")
-        f_dsaid = m4.selectbox("Dashboard Said", ["PUT", "CALL", "WAIT"], key="lt_dsaid")
-
-        st.markdown("**Reflection & Notes**")
-        n1, n2, n3 = st.columns(3)
-        f_hold    = n1.text_input("Hold Time", placeholder="e.g. 25 mins", key="lt_hold")
-        f_lessons = n2.text_input("Lessons Learned", placeholder="e.g. Never enter RSI < 35", key="lt_lessons")
-        f_notes   = n3.text_input("Notes", placeholder="e.g. Clean bounce from VWAP", key="lt_notes")
-
-        sub = st.form_submit_button("💾 Save Trade", type="primary", use_container_width=True)
-
-        if sub:
-            now     = datetime.now()
-            capital = round(f_entry * f_lots * f_size, 2)
-            gross   = round((f_exit - f_entry) * f_lots * f_size, 2) if f_exit > 0 else 0.0
-            stt     = round(f_exit * f_lots * f_size * DEFAULT_STT_PCT / 100, 2) if f_exit > 0 else 0.0
-            other_c = DEFAULT_OTHER if f_exit > 0 else 0.0
-            f_brok  = DEFAULT_BROKERAGE if f_exit > 0 else 0.0
-            net     = round(gross - f_brok - stt - other_c, 2) if f_exit > 0 else 0.0
-            result  = "OPEN" if f_exit <= 0 else ("WIN" if net >= 0 else "LOSS")
-
-            trade_num = 1 if trades_df.empty else (pd.to_numeric(trades_df["Trade #"], errors="coerce").max() + 1)
-            row = {
-                "Trade #":         int(trade_num),
-                "Date":            now.strftime("%Y-%m-%d"),
-                "Time":            now.strftime("%H:%M"),
-                "Symbol":          f_symbol,
-                "Option Type":     f_type,
-                "Strike":          f_strike,
-                "Expiry":          f_expiry,
-                "Entry Price":     f_entry,
-                "Exit Price":      f_exit if f_exit > 0 else "",
-                "Lots":            f_lots,
-                "Lot Size":        f_size,
-                "Capital Used":    capital,
-                "Gross P&L":       gross if f_exit > 0 else "",
-                "Brokerage":       f_brok if f_exit > 0 else "",
-                "STT":             stt if f_exit > 0 else "",
-                "Other Charges":   other_c if f_exit > 0 else "",
-                "Net P&L":         net if f_exit > 0 else "",
-                "Result":          result,
-                "Hold Time":       f_hold,
-                "Entry RSI":       round(f_rsi, 1) if f_rsi else "",
-                "Entry ADX":       round(f_adx, 1) if f_adx else "",
-                "Supertrend":      f_st,
-                "Dashboard Said":  f_dsaid,
-                "Lessons Learned": f_lessons,
-                "Notes":           f_notes,
-            }
-            new_df = pd.concat([trades_df, pd.DataFrame([row])], ignore_index=True)
-            save_trades(new_df)
-
-            if result in ("WIN", "LOSS"):
-                fresh_cap = load_capital()
-                new_bal   = round(float(fresh_cap.get("current_capital", 40000.0)) + net, 2)
-                fresh_cap["current_capital"] = new_bal
-                fresh_cap["history"] = fresh_cap.get("history", []) + [{
-                    "date": now.strftime("%Y-%m-%d"),
-                    "balance": new_bal,
-                    "note": "Trade #{} {} | Net P&L: Rs {:,.0f}".format(int(trade_num), result, net)
-                }]
-                save_capital(fresh_cap)
-
-            emoji = "✅ WIN" if result == "WIN" else ("❌ LOSS" if result == "LOSS" else "📂 OPEN")
-            st.success("Trade #{} saved! {} | Net P&L: {}".format(
-                row["Trade #"], emoji, "Rs {:,.0f}".format(net) if f_exit > 0 else "Open position"))
-            st.rerun()
-
-    # ── Recent Trades Log + Delete ─────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("📋 Recent Trades Log")
-
-    fresh_df = load_trades()
-    if fresh_df.empty:
-        st.info("No trades logged yet in the database.")
-    else:
-        show_cols = ["Trade #", "Date", "Symbol", "Option Type", "Strike",
-                     "Entry Price", "Exit Price", "Lots", "Net P&L", "Result"]
-        recent = fresh_df[show_cols].sort_values("Trade #", ascending=False).head(20)
-        st.dataframe(recent, use_container_width=True, hide_index=True)
-
-    st.markdown("#### 🗑️ Delete a Trade")
-    st.caption("⚠️ Deleting a closed trade will also reverse its impact on your capital balance.")
-
-    if fresh_df.empty:
-        st.caption("No trades available to delete.")
-    else:
-        del_col1, del_col2 = st.columns([2, 1])
-        trade_labels = [
-            "#{} — {} {} {} | {}".format(
-                int(r["Trade #"]), r["Date"], r["Symbol"],
-                r["Option Type"],  r["Result"])
-            for _, r in fresh_df.sort_values("Trade #", ascending=False).iterrows()
-        ]
-        sel_label = del_col1.selectbox("Select trade to delete", trade_labels, key="lt_del_sel")
-        sel_num   = int(sel_label.split(" — ")[0].replace("#", "").strip())
-
-        if del_col2.button("🗑️ Delete Selected Trade", type="secondary", use_container_width=True, key="lt_del_btn"):
-            mask = pd.to_numeric(fresh_df["Trade #"], errors="coerce") == sel_num
-            trade = fresh_df[mask].iloc[0]
-            result = str(trade.get("Result", ""))
-            net = float(trade.get("Net P&L", 0) or 0)
-
-            updated_df = fresh_df[~mask].reset_index(drop=True)
-            save_trades(updated_df)
-
-            if result in ("WIN", "LOSS") and net != 0.0:
-                fresh_cap = load_capital()
-                new_bal   = round(float(fresh_cap.get("current_capital", 40000.0)) - net, 2)
-                fresh_cap["current_capital"] = new_bal
-                fresh_cap["history"] = fresh_cap.get("history", []) + [{
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "balance": new_bal,
-                    "note": "Reversed Trade #{} {} (Rs {:,.0f})".format(sel_num, result, net)
-                }]
-                save_capital(fresh_cap)
-
-            st.success("✅ Trade #{} deleted successfully!".format(sel_num))
-            st.rerun()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ██  PAGE: 🔄 ANGEL ONE SYNC
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "🔄 Angel One Sync":
-    st.title("🔄 Angel One Auto-Sync")
-    st.caption("Automatically fetch your executed trades from Angel One — no manual entry needed!")
-    st.markdown("---")
-    render_angel_sync_panel(load_fn=load_trades, save_fn=save_trades, columns=COLUMNS)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ██  PAGE: 📋 ALL TRADES
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "📋 All Trades":
-    st.title("📋 All Trades")
-    if trades_df.empty:
-        st.info("No trades yet. Log your first trade from **📓 Log Trade**.")
-    else:
-        fc1, fc2, fc3 = st.columns(3)
-        syms     = ["All"] + sorted(trades_df["Symbol"].dropna().unique().tolist())
-        filt_sym = fc1.selectbox("Symbol",      syms)
-        filt_typ = fc2.selectbox("Option Type", ["All", "PUT", "CALL"])
-        filt_res = fc3.selectbox("Result",      ["All", "WIN", "LOSS", "OPEN"])
-        view = trades_df.copy()
-        if filt_sym != "All": view = view[view["Symbol"] == filt_sym]
-        if filt_typ != "All": view = view[view["Option Type"] == filt_typ]
-        if filt_res != "All": view = view[view["Result"] == filt_res]
-        st.caption("{} trades shown".format(len(view)))
-        st.dataframe(view.sort_values("Trade #", ascending=False), use_container_width=True, hide_index=True)
-        if not view.empty:
-            pnl_tot = pd.to_numeric(view["Net P&L"], errors="coerce").sum()
-            d, dc   = pnl_delta(pnl_tot)
-            t1, t2  = st.columns(2)
-            t1.metric("Net P&L (filtered)", "Rs {:,.0f}".format(pnl_tot), d, delta_color=dc)
-            t2.metric("Capital Used",       "Rs {:,.0f}".format(pd.to_numeric(view["Capital Used"], errors="coerce").sum()))
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ██  PAGE: 📅 MONTHLY REPORT
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "📅 Monthly Report":
-    st.title("📅 Monthly P&L Report")
-    if closed_df.empty:
-        st.info("No closed trades yet.")
-    else:
-        mdf = closed_df.copy()
-        mdf["Month"] = pd.to_datetime(mdf["Date"], errors="coerce").dt.strftime("%Y-%m")
-        grouped = mdf.groupby("Month").apply(lambda g: pd.Series({
-            "Trades":       len(g),
-            "Wins":         (g["Result"] == "WIN").sum(),
-            "Losses":       (g["Result"] == "LOSS").sum(),
-            "Win Rate %":   round((g["Result"] == "WIN").sum() / len(g) * 100, 1),
-            "Gross P&L":    pd.to_numeric(g["Gross P&L"], errors="coerce").sum().round(2),
-            "Charges":      (pd.to_numeric(g["Brokerage"], errors="coerce").sum() +
-                             pd.to_numeric(g["STT"], errors="coerce").sum() +
-                             pd.to_numeric(g["Other Charges"], errors="coerce").sum()).round(2),
-            "Net P&L":      pd.to_numeric(g["Net P&L"], errors="coerce").sum().round(2),
-        })).reset_index()
-
-        st.dataframe(grouped, use_container_width=True, hide_index=True)
-
-        fig_m = go.Figure()
-        colors = ["#26a69a" if v >= 0 else "#ef5350" for v in grouped["Net P&L"]]
-        fig_m.add_trace(go.Bar(x=grouped["Month"], y=grouped["Net P&L"], marker_color=colors))
-        fig_m.update_layout(template="plotly_dark", height=300, yaxis_title="Net P&L (Rs)")
-        st.plotly_chart(fig_m, use_container_width=True)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ██  PAGE: 📈 PERFORMANCE
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "📈 Performance":
-    st.title("📈 Performance Analysis")
-    if closed_df.empty:
-        st.info("No closed trades yet.")
-    else:
-        t1, t2, t3 = st.tabs(["By Symbol", "PUT vs CALL", "Dashboard Accuracy"])
-        with t1:
-            sg = closed_df.groupby("Symbol").apply(lambda g: pd.Series({
-                "Trades":    len(g),
-                "Wins":      (g["Result"] == "WIN").sum(),
-                "Net P&L":   pd.to_numeric(g["Net P&L"], errors="coerce").sum().round(2),
-                "Win Rate %": round((g["Result"] == "WIN").sum() / len(g) * 100, 1),
-            })).reset_index()
-            st.dataframe(sg, use_container_width=True, hide_index=True)
-        with t2:
-            og = closed_df.groupby("Option Type").apply(lambda g: pd.Series({
-                "Trades":    len(g),
-                "Wins":      (g["Result"] == "WIN").sum(),
-                "Net P&L":   pd.to_numeric(g["Net P&L"], errors="coerce").sum().round(2),
-                "Win Rate %": round((g["Result"] == "WIN").sum() / len(g) * 100, 1),
-            })).reset_index()
-            st.dataframe(og, use_container_width=True, hide_index=True)
-        with t3:
-            dg = closed_df.groupby("Dashboard Said").apply(lambda g: pd.Series({
-                "Trades":    len(g),
-                "Wins":      (g["Result"] == "WIN").sum(),
-                "Net P&L":   pd.to_numeric(g["Net P&L"], errors="coerce").sum().round(2),
-                "Win Rate %": round((g["Result"] == "WIN").sum() / len(g) * 100, 1),
-            })).reset_index()
-            st.dataframe(dg, use_container_width=True, hide_index=True)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ██  PAGE: 💸 EXPENSES
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "💸 Expenses":
-    st.title("💸 Brokerage & Taxes Breakdown")
-    if closed_df.empty:
-        st.info("No closed trades yet.")
-    else:
-        brok_tot  = pd.to_numeric(closed_df["Brokerage"], errors="coerce").sum()
-        stt_tot   = pd.to_numeric(closed_df["STT"], errors="coerce").sum()
-        other_tot = pd.to_numeric(closed_df["Other Charges"], errors="coerce").sum()
-        grand_tot = brok_tot + stt_tot + other_tot
-
-        e1, e2, e3, e4 = st.columns(4)
-        e1.metric("Total Charges", "Rs {:,.0f}".format(grand_tot))
-        e2.metric("Brokerage",     "Rs {:,.0f}".format(brok_tot))
-        e3.metric("STT (Govt)",    "Rs {:,.0f}".format(stt_tot))
-        e4.metric("Other Charges", "Rs {:,.0f}".format(other_tot))
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ██  PAGE: ⬇️ EXPORT
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "⬇️ Export":
-    st.title("⬇️ Export Your Records")
-    st.markdown("---")
-    if trades_df.empty:
-        st.info("No trades to export yet.")
-    else:
-        st.subheader("📋 Download CSV")
-        st.download_button(
-            label="⬇️ Download CSV",
-            data=trades_df.to_csv(index=False).encode("utf-8"),
-            file_name="Raja_Trades_{}.csv".format(datetime.now().strftime("%Y%m%d")),
-            mime="text/csv",
-            use_container_width=True,
-        )
-
 st.markdown("---")
-st.caption("📈 Nifty F&O Unified Trader & Records | Powered by Supabase Cloud | Educational & personal tracking only")
+st.caption("📈 Nifty F&O Signal Dashboard | Data via yfinance | Educational & personal use only")
