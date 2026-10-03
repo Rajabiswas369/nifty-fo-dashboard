@@ -74,14 +74,44 @@ def _login_angel():
 
 def fetch_angel_trades(days_back: int = 1) -> list:
     """
-    Fetch executed trades from Angel One trade book.
-    Returns list of raw trade dicts from Angel API.
+    Fetch executed trades from Angel One.
+    - tradeBook() = today's executed trades only
+    - orderBook() = all orders including past days (we filter COMPLETE ones)
+    We try both and merge, so Thursday/older trades are included.
     """
-    obj        = _login_angel()
-    trade_book = obj.tradeBook()
-    if not trade_book or trade_book.get("status") is False:
-        return []
-    return trade_book.get("data", []) or []
+    obj = _login_angel()
+    all_trades = []
+
+    # 1. Trade book — today's filled trades
+    try:
+        trade_book = obj.tradeBook()
+        if trade_book and trade_book.get("status") is not False:
+            trades = trade_book.get("data", []) or []
+            all_trades.extend(trades)
+    except Exception:
+        pass
+
+    # 2. Order book — historical orders (filter only COMPLETE/filled ones)
+    try:
+        order_book = obj.orderBook()
+        if order_book and order_book.get("status") is not False:
+            orders = order_book.get("data", []) or []
+            # Only keep completely filled orders
+            filled = [o for o in orders if str(o.get("status","")).upper() in
+                      ("COMPLETE", "FILLED", "TRADED", "EXECUTED")]
+            # Add orders not already in trade list (by orderid)
+            existing_ids = {t.get("orderid","") for t in all_trades}
+            for o in filled:
+                if o.get("orderid","") not in existing_ids:
+                    # Map order fields to trade fields
+                    o["fillprice"]  = o.get("averageprice", o.get("price", 0))
+                    o["fillsize"]   = o.get("filledshares", o.get("quantity", 0))
+                    o["filltime"]   = o.get("updatetime", "")
+                    all_trades.append(o)
+    except Exception:
+        pass
+
+    return all_trades
 
 
 def _parse_angel_trade(raw: dict) -> dict:
