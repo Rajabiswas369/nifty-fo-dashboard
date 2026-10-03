@@ -123,6 +123,32 @@ def save_capital(data: dict):
             st.error("Could not save capital: {}".format(e))
 
 
+def delete_trade_entry(df: pd.DataFrame, trade_num: int, cap_data: dict) -> tuple:
+    """Remove trade row and reverse capital. Returns (new_df, new_cap_data, status_msg)."""
+    mask  = pd.to_numeric(df["Trade #"], errors="coerce") == trade_num
+    if not mask.any():
+        return df, cap_data, "Trade #{} not found.".format(trade_num)
+    trade  = df[mask].iloc[0]
+    result = str(trade.get("Result", ""))
+    try:
+        net = float(trade.get("Net P&L", 0) or 0)
+    except Exception:
+        net = 0.0
+    new_df = df[~mask].reset_index(drop=True)
+    msg = "✅ Trade #{} deleted (OPEN — no capital change).".format(trade_num)
+    if result in ("WIN", "LOSS") and net != 0.0:
+        current = cap_data.get("current_capital", 40000.0)
+        new_bal = round(current - net, 2)
+        cap_data.setdefault("history", []).append({
+            "date":    datetime.now().strftime("%Y-%m-%d"),
+            "balance": new_bal,
+            "note":    "Deleted Trade #{} {} | Reversed Rs {:,.0f}".format(trade_num, result, net),
+        })
+        cap_data["current_capital"] = new_bal
+        msg = "✅ Trade #{} deleted & capital reversed. New Balance: Rs {:,.0f}".format(trade_num, new_bal)
+    return new_df, cap_data, msg
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Stats helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -534,6 +560,38 @@ elif page == "📓 Log Trade":
                 row["Trade #"], emoji,
                 "Rs {:,.0f}".format(net) if f_exit > 0 else "Open",
                 cap_data["current_capital"] if result in ("WIN","LOSS") else cap_stats["current"]))
+            st.cache_data.clear()
+            st.rerun()
+
+    # ── Recent Trades Log + Delete ─────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("📋 Recent Trades Log")
+    if df.empty:
+        st.info("No trades logged yet.")
+    else:
+        show_cols = ["Trade #", "Date", "Symbol", "Option Type", "Strike",
+                     "Entry Price", "Exit Price", "Lots", "Net P&L", "Result"]
+        recent = df[show_cols].sort_values("Trade #", ascending=False).head(20)
+        st.dataframe(recent, use_container_width=True, hide_index=True)
+
+        st.markdown("#### 🗑️ Delete a Trade")
+        st.caption("⚠️ Deleting a closed trade will also reverse its impact on your capital balance.")
+        del_col1, del_col2 = st.columns([2, 1])
+        trade_labels = [
+            "#{} — {} {} {} | {}".format(
+                int(r["Trade #"]), r["Date"], r["Symbol"],
+                r["Option Type"], r["Result"])
+            for _, r in df.sort_values("Trade #", ascending=False).iterrows()
+        ]
+        sel_label = del_col1.selectbox("Select trade to delete", trade_labels, key="lt_del_sel")
+        sel_num   = int(sel_label.split(" — ")[0].replace("#", "").strip())
+
+        if del_col2.button("🗑️ Delete Selected Trade", type="secondary", use_container_width=True, key="lt_del_btn"):
+            fresh_cap = load_capital()
+            new_df, new_cap, msg = delete_trade_entry(df, sel_num, fresh_cap)
+            save_trades(new_df)
+            save_capital(new_cap)
+            st.success(msg)
             st.cache_data.clear()
             st.rerun()
 
