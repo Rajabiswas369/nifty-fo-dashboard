@@ -265,7 +265,19 @@ def _save_capital(df: pd.DataFrame) -> None:
         st.error("Could not save capital: {}".format(e))
 
 
+def reset_capital(initial_capital: float, start_date: str = "") -> None:
+    """Reset capital history with a clean initial balance."""
+    date_str = start_date if start_date else datetime.now().strftime("%Y-%m-%d")
+    df = pd.DataFrame([{
+        "Date":    date_str,
+        "Balance": round(initial_capital, 2),
+        "Note":    "Initial starting capital",
+    }])
+    _save_capital(df)
+
+
 def update_capital(new_balance: float, note: str = "") -> None:
+    """Append a row with an explicit absolute balance value."""
     df  = load_capital_history()
     row = pd.DataFrame([{
         "Date":    datetime.now().strftime("%Y-%m-%d"),
@@ -275,19 +287,55 @@ def update_capital(new_balance: float, note: str = "") -> None:
     _save_capital(pd.concat([df, row], ignore_index=True))
 
 
+def add_capital_deposit(amount: float, note: str = "") -> float:
+    """Add `amount` to current balance and save. Returns the new balance."""
+    df      = load_capital_history()
+    current = float(df["Balance"].iloc[-1]) if not df.empty else 40000.0
+    new_bal = round(current + amount, 2)
+    row = pd.DataFrame([{
+        "Date":    datetime.now().strftime("%Y-%m-%d"),
+        "Balance": new_bal,
+        "Note":    note or "[DEPOSIT] Rs {:,.0f}".format(amount),
+    }])
+    _save_capital(pd.concat([df, row], ignore_index=True))
+    return new_bal
+
+
+def withdraw_capital(amount: float, note: str = "") -> float:
+    """Subtract `amount` from current balance and save. Returns the new balance."""
+    df      = load_capital_history()
+    current = float(df["Balance"].iloc[-1]) if not df.empty else 40000.0
+    new_bal = round(current - amount, 2)
+    row = pd.DataFrame([{
+        "Date":    datetime.now().strftime("%Y-%m-%d"),
+        "Balance": new_bal,
+        "Note":    note or "[WITHDRAWAL] Rs {:,.0f}".format(amount),
+    }])
+    _save_capital(pd.concat([df, row], ignore_index=True))
+    return new_bal
+
+
 def get_capital_stats() -> dict:
     df = load_capital_history()
     if df.empty:
         return {"initial": 40000.0, "current": 40000.0, "pnl": 0.0,
                 "pnl_pct": 0.0, "days": 0, "history": []}
     df["Balance"] = pd.to_numeric(df["Balance"], errors="coerce")
-    initial = float(df["Balance"].iloc[0])
+
+    # Prefer the row explicitly marked as starting capital; fall back to first row
+    init_mask = df["Note"].astype(str).str.contains("Initial starting capital", case=False, na=False)
+    if init_mask.any():
+        init_row = df[init_mask].iloc[0]
+    else:
+        init_row = df.iloc[0]
+
+    initial = float(init_row["Balance"])
     current = float(df["Balance"].iloc[-1])
     pnl     = round(current - initial, 2)
     pct     = round((pnl / initial) * 100, 2) if initial else 0.0
     try:
-        start = datetime.strptime(str(df["Date"].iloc[0]), "%Y-%m-%d")
-        days  = (datetime.now() - start).days
+        start = datetime.strptime(str(init_row["Date"]), "%Y-%m-%d")
+        days  = max(0, (datetime.now() - start).days)
     except Exception:
         days = 0
     return {
