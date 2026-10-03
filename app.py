@@ -37,6 +37,36 @@ DEFAULT_BROKERAGE = 40.0
 DEFAULT_STT_PCT   = 0.05
 DEFAULT_OTHER     = 15.0
 
+# Display name → Supabase column name
+COL_TO_DB = {
+    "Trade #":        "trade_num",
+    "Date":           "date",
+    "Time":           "time",
+    "Symbol":         "symbol",
+    "Option Type":    "option_type",
+    "Strike":         "strike",
+    "Expiry":         "expiry",
+    "Entry Price":    "entry_price",
+    "Exit Price":     "exit_price",
+    "Lots":           "lots",
+    "Lot Size":       "lot_size",
+    "Capital Used":   "capital_used",
+    "Gross P&L":      "gross_pnl",
+    "Brokerage":      "brokerage",
+    "STT":            "stt",
+    "Other Charges":  "other_charges",
+    "Net P&L":        "net_pnl",
+    "Result":         "result",
+    "Hold Time":      "hold_time",
+    "Entry RSI":      "entry_rsi",
+    "Entry ADX":      "entry_adx",
+    "Supertrend":     "supertrend",
+    "Dashboard Said": "dashboard_said",
+    "Lessons Learned":"lessons_learned",
+    "Notes":          "notes",
+}
+DB_TO_COL = {v: k for k, v in COL_TO_DB.items()}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Supabase helpers (same backend as raja-trading-records)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -64,7 +94,7 @@ def load_trades() -> pd.DataFrame:
         data   = resp.data
         if not data:
             return pd.DataFrame(columns=COLUMNS)
-        df = pd.DataFrame(data).rename(columns={"trade_num": "Trade #"})
+        df = pd.DataFrame(data).rename(columns=DB_TO_COL)
         for col in COLUMNS:
             if col not in df.columns:
                 df[col] = ""
@@ -114,9 +144,10 @@ def save_trades(df: pd.DataFrame):
     try:
         client = _get_client()
         client.table("trades").delete().neq("trade_num", -999).execute()
-        rows = df.copy().rename(columns={"Trade #": "trade_num"})
-        rows = rows.fillna("").astype(str)
-        records = rows.to_dict("records")
+        rows    = df.copy().rename(columns=COL_TO_DB)
+        rows    = rows.fillna("").astype(str)
+        db_cols = [c for c in rows.columns if c in DB_TO_COL or c in COL_TO_DB.values()]
+        records = rows[db_cols].to_dict("records")
         if records:
             client.table("trades").insert(records).execute()
     except Exception as e:
