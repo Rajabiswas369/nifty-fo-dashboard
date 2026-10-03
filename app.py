@@ -515,10 +515,25 @@ elif page == "📓 Log Trade":
             }
             new_df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
             save_trades(new_df)
+
+            # ── Auto-update capital when trade is closed ───────────────────────
+            if result in ("WIN", "LOSS"):
+                current_bal = cap_stats["current"]
+                new_bal     = round(current_bal + net, 2)
+                cap_data.setdefault("history", []).append({
+                    "date":    now.strftime("%Y-%m-%d"),
+                    "balance": new_bal,
+                    "note":    "Trade #{} {} {} {} | Net P&L: Rs {:,.0f}".format(
+                        row["Trade #"], result, f_symbol, f_type, net),
+                })
+                cap_data["current_capital"] = new_bal
+                save_capital(cap_data)
+
             emoji = "✅ WIN" if result == "WIN" else ("❌ LOSS" if result == "LOSS" else "📂 OPEN")
-            st.success("Trade #{} saved to cloud! {} | Net P&L: {}".format(
+            st.success("Trade #{} saved to cloud! {} | Net P&L: {} | New Balance: Rs {:,.0f}".format(
                 row["Trade #"], emoji,
-                "Rs {:,.0f}".format(net) if f_exit > 0 else "Open"))
+                "Rs {:,.0f}".format(net) if f_exit > 0 else "Open",
+                cap_data["current_capital"] if result in ("WIN","LOSS") else cap_stats["current"]))
             st.cache_data.clear()
             st.rerun()
 
