@@ -1,35 +1,20 @@
 """
 Nifty F&O Unified Cloud Dashboard
 ===================================
-All-in-one Streamlit Cloud app:
-  📈 Live Signal Dashboard    — RSI, ADX, Supertrend, MACD, VWAP, trade decision
-  📰 Market News & Verdict    — Should I trade today? Checks + live headlines
-  📓 Log Trade                — Manual trade entry saved to Google Sheets
-  🔄 Angel One Sync           — Auto-fetch executed trades from Angel One
-  📊 My Dashboard             — P&L overview, equity curve, win/loss
-  💰 My Capital               — Capital tracker and balance history
-  📋 All Trades               — View, filter, search all trades
-  📅 Monthly Report           — P&L statement per month
-  📈 Performance Analysis     — Win rate, RR ratio, by symbol/type
-  💸 Charges & Expenses       — Brokerage / STT breakdown
-  ⬇️  Export                  — Download CSV
-
-Deploy to Streamlit Cloud — works on any device (mobile, tablet, PC).
-Data stored permanently in Google Sheets — safe even if laptop is lost.
+All-in-one Streamlit Cloud app — 100% Supabase backend, no Google Sheets needed.
 
 Secrets required in Streamlit Cloud Settings → Secrets:
-  spreadsheet_url = "YOUR_GOOGLE_SHEET_URL"
+  supabase_url    = "https://xxxx.supabase.co"
+  supabase_key    = "your-anon-key"
 
-  angel_api_key   = "YOUR_API_KEY"
-  angel_client_id = "YOUR_CLIENT_ID"
-  angel_mpin      = "YOUR_MPIN"
-  angel_totp_key  = "YOUR_TOTP_SECRET"
+  angel_api_key   = "YOUR_API_KEY"      (optional)
+  angel_client_id = "YOUR_CLIENT_ID"    (optional)
+  angel_mpin      = "YOUR_MPIN"         (optional)
+  angel_totp_key  = "YOUR_TOTP_SECRET"  (optional)
 """
 
 # ── Standard imports ──────────────────────────────────────────────────────────
-import os
 import json
-import traceback
 import pandas as pd
 import numpy as np
 import requests
@@ -208,14 +193,14 @@ else:
 # Cloud connection status in sidebar
 st.sidebar.markdown("---")
 try:
-    _conn_ok = ("connections" in st.secrets and "gsheets" in st.secrets["connections"])
+    _supa_ok = "supabase_url" in st.secrets and "supabase_key" in st.secrets
 except Exception:
-    _conn_ok = False
+    _supa_ok = False
 
-if _conn_ok:
-    st.sidebar.success("☁️ Google Sheets **Connected**")
+if _supa_ok:
+    st.sidebar.success("☁️ Storage: **Supabase Cloud (Live)**")
 else:
-    st.sidebar.warning("⚠️ Google Sheets not connected")
+    st.sidebar.warning("⚠️ Supabase not connected")
 
 angel_ok = is_angel_configured()
 if angel_ok:
@@ -225,97 +210,125 @@ else:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# GOOGLE SHEETS HELPERS
+# SUPABASE HELPERS
 # ═════════════════════════════════════════════════════════════════════════════
-def _get_conn():
+COL_TO_DB = {
+    "Trade #": "trade_num", "Date": "date", "Time": "time",
+    "Symbol": "symbol", "Option Type": "option_type", "Strike": "strike",
+    "Expiry": "expiry", "Entry Price": "entry_price", "Exit Price": "exit_price",
+    "Lots": "lots", "Lot Size": "lot_size", "Capital Used": "capital_used",
+    "Gross P&L": "gross_pnl", "Brokerage": "brokerage", "STT": "stt",
+    "Other Charges": "other_charges", "Net P&L": "net_pnl", "Result": "result",
+    "Hold Time": "hold_time", "Entry RSI": "entry_rsi", "Entry ADX": "entry_adx",
+    "Supertrend": "supertrend", "Dashboard Said": "dashboard_said",
+    "Lessons Learned": "lessons_learned", "Notes": "notes",
+}
+DB_TO_COL = {v: k for k, v in COL_TO_DB.items()}
+
+
+def _supa_client():
+    from supabase import create_client
+    return create_client(st.secrets["supabase_url"], st.secrets["supabase_key"])
+
+
+def _is_supa() -> bool:
     try:
-        if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-            from streamlit_gsheets import GSheetsConnection
-            return st.connection("gsheets", type=GSheetsConnection)
+        return "supabase_url" in st.secrets and "supabase_key" in st.secrets
     except Exception:
-        pass
-    return None
+        return False
 
 
-@st.cache_data(ttl=5, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def load_trades() -> pd.DataFrame:
-    conn = _get_conn()
-    if conn:
-        try:
-            df = conn.read(worksheet="Trades", ttl="0s")
-            if df is not None and not df.empty:
-                for col in TRADE_COLUMNS:
-                    if col not in df.columns:
-                        df[col] = ""
-                return df[TRADE_COLUMNS]
-        except Exception:
-            pass
-    return pd.DataFrame(columns=TRADE_COLUMNS)
+    if not _is_supa():
+        return st.session_state.get("trades_df", pd.DataFrame(columns=TRADE_COLUMNS))
+    try:
+        data = _supa_client().table("trades").select("*").order("trade_num").execute().data
+        if not data:
+            return pd.DataFrame(columns=TRADE_COLUMNS)
+        df = pd.DataFrame(data).rename(columns=DB_TO_COL)
+        for col in TRADE_COLUMNS:
+            if col not in df.columns:
+                df[col] = ""
+        return df[TRADE_COLUMNS]
+    except Exception as e:
+        st.warning("Could not load trades: {}".format(e))
+        return pd.DataFrame(columns=TRADE_COLUMNS)
 
 
-@st.cache_data(ttl=5, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def load_capital() -> dict:
-    conn = _get_conn()
-    if conn:
-        try:
-            cdf = conn.read(worksheet="Capital", ttl="0s")
-            if cdf is not None and not cdf.empty:
-                row = cdf.iloc[0].to_dict()
-                hist_raw  = row.get("history_json", "[]")
-                history   = json.loads(hist_raw) if isinstance(hist_raw, str) else []
-                goal_raw  = row.get("goal_json", "{}")
-                try:
-                    goal_dict = json.loads(goal_raw) if isinstance(goal_raw, str) and goal_raw.strip() else {}
-                except Exception:
-                    goal_dict = {}
-                result = {
-                    "initial_capital": float(row.get("initial_capital", 40000.0)),
-                    "current_capital": float(row.get("current_capital", 40000.0)),
-                    "start_date":      str(row.get("start_date",      "2025-01-01")),
-                    "notes":           str(row.get("notes",           "")),
-                    "history":         history,
-                }
-                if goal_dict:
-                    result["goal"] = goal_dict
-                return result
-        except Exception:
-            pass
-    return {
-        "initial_capital": 40000.0,
-        "current_capital": 40000.0,
-        "start_date":      "2025-01-01",
-        "notes":           "Started trading Nifty F&O options",
-        "history":         [{"date": "2025-01-01", "balance": 40000.0, "note": "Initial capital"}],
-    }
+    if not _is_supa():
+        return st.session_state.get("cap_data", {
+            "initial_capital": 40000.0, "current_capital": 40000.0,
+            "start_date": "2025-01-01", "notes": "",
+            "history": [{"date": "2025-01-01", "balance": 40000.0, "note": "Initial capital"}],
+        })
+    try:
+        rows = _supa_client().table("capital").select("*").order("date").execute().data
+        if not rows:
+            return {"initial_capital": 40000.0, "current_capital": 40000.0,
+                    "start_date": "2025-01-01", "notes": "",
+                    "history": [{"date": "2025-01-01", "balance": 40000.0, "note": "Initial capital"}]}
+        history = [{"date": r.get("date",""), "balance": float(r.get("balance", 0)),
+                    "note": r.get("note","")} for r in rows]
+        latest  = float(rows[-1].get("balance", 40000.0))
+        first   = float(rows[0].get("balance",  40000.0))
+        return {
+            "initial_capital": first,
+            "current_capital": latest,
+            "start_date":      rows[0].get("date", "2025-01-01"),
+            "notes":           rows[-1].get("note", ""),
+            "history":         history,
+        }
+    except Exception as e:
+        st.warning("Could not load capital: {}".format(e))
+        return {"initial_capital": 40000.0, "current_capital": 40000.0,
+                "start_date": "2025-01-01", "notes": "",
+                "history": [{"date": "2025-01-01", "balance": 40000.0, "note": "Initial capital"}]}
 
 
 def save_trades(df: pd.DataFrame):
-    conn = _get_conn()
-    if conn:
-        try:
-            conn.update(worksheet="Trades", data=df)
-            st.cache_data.clear()
-        except Exception as e:
-            st.error("Could not save to Google Sheets: {}".format(e))
+    load_trades.clear()
+    if not _is_supa():
+        st.session_state["trades_df"] = df.copy()
+        return
+    try:
+        client = _supa_client()
+        client.table("trades").delete().gte("trade_num", 0).execute()
+        if df.empty:
+            return
+        rows = df.copy().rename(columns=COL_TO_DB)
+        db_cols = list(COL_TO_DB.values())
+        rows = rows[[c for c in db_cols if c in rows.columns]]
+        for col in ["trade_num","strike","entry_price","exit_price","lots","lot_size",
+                    "capital_used","gross_pnl","brokerage","stt","other_charges","net_pnl","entry_rsi","entry_adx"]:
+            if col in rows.columns:
+                rows[col] = pd.to_numeric(rows[col], errors="coerce")
+        rows = rows.where(pd.notnull(rows), None)
+        for record in rows.to_dict("records"):
+            client.table("trades").insert(record).execute()
+        st.cache_data.clear()
+    except Exception as e:
+        st.error("Could not save trades: {}".format(e))
 
 
 def save_capital(data: dict):
-    conn = _get_conn()
-    if conn:
-        try:
-            goal_obj = data.get("goal", {})
-            cdf = pd.DataFrame([{
-                "initial_capital": data.get("initial_capital", 40000.0),
-                "current_capital": data.get("current_capital", 40000.0),
-                "start_date":      data.get("start_date",      "2025-01-01"),
-                "notes":           data.get("notes",           ""),
-                "history_json":    json.dumps(data.get("history", [])),
-                "goal_json":       json.dumps(goal_obj) if goal_obj else "{}",
-            }])
-            conn.update(worksheet="Capital", data=cdf)
-            st.cache_data.clear()
-        except Exception as e:
-            st.error("Could not save capital: {}".format(e))
+    load_capital.clear()
+    if not _is_supa():
+        st.session_state["cap_data"] = data.copy()
+        return
+    try:
+        client = _supa_client()
+        history = data.get("history", [])
+        if history:
+            client.table("capital").delete().neq("date", "1900-01-01").execute()
+            rows = [{"date": h.get("date",""), "balance": float(h.get("balance", 0)),
+                     "note": h.get("note","")} for h in history]
+            client.table("capital").insert(rows).execute()
+        st.cache_data.clear()
+    except Exception as e:
+        st.error("Could not save capital: {}".format(e))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1320,7 +1333,7 @@ elif page == "📰 Market News & Verdict":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📊 My Records Dashboard":
     st.title("📊 My Trading Dashboard")
-    st.caption("Personal performance overview — updated live from Google Sheets.")
+    st.caption("Personal performance overview — updated live from Supabase Cloud.")
     st.markdown("---")
     remaining_pct = (cap_stats["current"]/cap_stats["initial"]*100) if cap_stats["initial"] else 0
     cap_d, cap_dc = pnl_delta(cap_stats["pnl"])
@@ -1537,7 +1550,7 @@ elif page == "💰 My Capital":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📓 Log Trade":
     st.title("📓 Log a Trade")
-    st.caption("Every trade saved permanently to Google Sheets ☁️")
+    st.caption("Every trade saved permanently to Supabase Cloud ☁️")
     st.markdown("---")
     st.subheader("Trade Details")
     c1,c2,c3,c4 = st.columns(4)
@@ -1876,7 +1889,7 @@ elif page == "⬇️ Export":
             mime="text/csv",
             use_container_width=True,
         )
-        st.info("Your data is safely stored in Google Sheets ☁️ — no laptop needed! Download is just a backup copy.")
+        st.info("Your data is safely stored in Supabase Cloud ☁️ — no laptop needed! Download is just a backup copy.")
 
 
 # ── Global footer ─────────────────────────────────────────────────────────────
