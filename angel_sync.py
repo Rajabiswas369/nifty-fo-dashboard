@@ -1,6 +1,6 @@
 """
 angel_sync.py — Angel One SmartAPI auto trade fetcher.
-Fetches your executed F&O trades from Angel One and saves to Google Sheets.
+Fetches your executed F&O trades from Angel One and saves to Supabase Cloud.
 """
 
 import streamlit as st
@@ -149,7 +149,7 @@ def _parse_angel_trade(raw: dict) -> dict:
 
 def match_and_save_trades(raw_trades: list, load_fn, save_fn, columns: list) -> tuple:
     """
-    Match BUY+SELL pairs from Angel trades and append to Google Sheets.
+    Match BUY+SELL pairs from Angel trades and append to Supabase Cloud.
     Returns (saved_count, skipped_count, message).
     """
     DEFAULT_BROKERAGE = 40.0
