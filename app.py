@@ -486,8 +486,13 @@ def get_summary(df: pd.DataFrame) -> dict:
 @st.cache_data(ttl=300)
 def load_chart_data(sym, ivl, per):
     import yfinance as yf
+    import requests
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    })
     ticker = NSE_SYMBOLS.get(sym, sym)
-    df = yf.download(ticker, period=per, interval=ivl, progress=False, auto_adjust=True)
+    df = yf.download(ticker, period=per, interval=ivl, progress=False, auto_adjust=True, session=session)
     if df.empty:
         raise ValueError("No data for {}".format(sym))
     if isinstance(df.columns, pd.MultiIndex):
@@ -607,7 +612,12 @@ def get_time_window(now_ist: datetime) -> dict:
 def fetch_nifty_gap() -> dict:
     try:
         import yfinance as yf
-        hist = yf.Ticker("^NSEI").history(period="5d", interval="1d")
+        import requests
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+        })
+        hist = yf.Ticker("^NSEI", session=session).history(period="5d", interval="1d")
         if len(hist) >= 2:
             prev = float(hist["Close"].iloc[-2])
             last = float(hist["Close"].iloc[-1])
