@@ -506,14 +506,9 @@ def get_summary(df: pd.DataFrame) -> dict:
 @st.cache_data(ttl=900)
 def load_chart_data(sym, ivl, per):
     import yfinance as yf
-    import requests
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-    })
     ticker = NSE_SYMBOLS.get(sym, sym)
-    # auto_adjust is the default in yfinance 1.x; pass it explicitly for 0.2.x compat.
-    df = yf.download(ticker, period=per, interval=ivl, progress=False, auto_adjust=True, session=session)
+    # Do NOT pass a custom session — yfinance 0.2.x+ requires curl_cffi internally.
+    df = yf.download(ticker, period=per, interval=ivl, progress=False, auto_adjust=True)
     if df.empty:
         raise ValueError("No data for {}".format(sym))
     # yfinance 1.x returns a MultiIndex (price_type, ticker) — flatten to single level.
@@ -634,12 +629,8 @@ def get_time_window(now_ist: datetime) -> dict:
 def fetch_nifty_gap() -> dict:
     try:
         import yfinance as yf
-        import requests
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-        })
-        hist = yf.Ticker("^NSEI", session=session).history(period="5d", interval="1d")
+        # Do NOT pass a custom session — yfinance 0.2.x+ requires curl_cffi internally.
+        hist = yf.Ticker("^NSEI").history(period="5d", interval="1d")
         if len(hist) >= 2:
             prev = float(hist["Close"].iloc[-2])
             last = float(hist["Close"].iloc[-1])
