@@ -144,6 +144,7 @@ page = st.sidebar.radio(
         "📈 Performance",
         "💸 Expenses",
         "⬇️ Export",
+        "🤖 AI Trading Coach",
     ],
     index=0,
 )
@@ -432,12 +433,23 @@ def _supertrend(df, period=10, multiplier=3.0):
 def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     import ta as _ta
     df = df.copy()
-    close, high, low, vol = df["Close"], df["High"], df["Low"], df["Volume"]
+    close, high, low = df["Close"], df["High"], df["Low"]
+
+    # yfinance 1.x returns Volume=0 for all intraday NSE bars.
+    # Replace zeros with NaN so volume-based indicators (VWAP, CMF) use only
+    # real volume; fall back to a price-based proxy when all bars are zero.
+    raw_vol = df["Volume"].copy().astype(float)
+    raw_vol = raw_vol.where(raw_vol > 0, other=np.nan)
+    vol_all_nan = raw_vol.isna().all()
+    vol = raw_vol if not vol_all_nan else df["Volume"].astype(float)
 
     df["EMA_9"]   = _ta.trend.EMAIndicator(close, 9).ema_indicator()
     df["EMA_21"]  = _ta.trend.EMAIndicator(close, 21).ema_indicator()
     df["EMA_50"]  = _ta.trend.EMAIndicator(close, 50).ema_indicator()
-    df["EMA_200"] = _ta.trend.EMAIndicator(close, 200).ema_indicator()
+    # EMA_200 needs 200+ bars. For shorter periods (1h/1mo = ~130 bars), back-fill
+    # with EMA_50 so dropna() does not wipe the entire DataFrame.
+    ema200_raw = _ta.trend.EMAIndicator(close, 200).ema_indicator()
+    df["EMA_200"] = ema200_raw.fillna(df["EMA_50"])
 
     macd = _ta.trend.MACD(close, 26, 12, 9)
     df["MACD"] = macd.macd(); df["MACD_signal"] = macd.macd_signal(); df["MACD_hist"] = macd.macd_diff()
@@ -454,8 +466,16 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["BB_pct"]   = bb.bollinger_pband()
     df["ATR"] = _ta.volatility.AverageTrueRange(high, low, close, 14).average_true_range()
 
-    df["VWAP"] = _ta.volume.VolumeWeightedAveragePrice(high, low, close, vol).volume_weighted_average_price()
-    df["CMF"]  = _ta.volume.ChaikinMoneyFlowIndicator(high, low, close, vol, 20).chaikin_money_flow()
+    if vol_all_nan:
+        # Volume unavailable for this interval/symbol — use rolling mean as proxy
+        df["VWAP"] = close.rolling(14, min_periods=1).mean()
+        df["CMF"]  = pd.Series(0.0, index=df.index)
+    else:
+        df["VWAP"] = _ta.volume.VolumeWeightedAveragePrice(high, low, close, vol).volume_weighted_average_price()
+        df["CMF"]  = _ta.volume.ChaikinMoneyFlowIndicator(high, low, close, vol, 20).chaikin_money_flow()
+        # Pandas CoW-safe fill (no inplace on a column slice)
+        df["VWAP"] = df["VWAP"].ffill()
+        df["CMF"]  = df["CMF"].ffill()
 
     df["EMA_cross"]  = np.where(df["EMA_9"] > df["EMA_21"], 1, -1)
     df["MACD_cross"] = np.where(df["MACD"]  > df["MACD_signal"], 1, -1)
@@ -492,14 +512,16 @@ def load_chart_data(sym, ivl, per):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
     })
     ticker = NSE_SYMBOLS.get(sym, sym)
+    # auto_adjust is the default in yfinance 1.x; pass it explicitly for 0.2.x compat.
     df = yf.download(ticker, period=per, interval=ivl, progress=False, auto_adjust=True, session=session)
     if df.empty:
         raise ValueError("No data for {}".format(sym))
+    # yfinance 1.x returns a MultiIndex (price_type, ticker) — flatten to single level.
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df.index = pd.to_datetime(df.index)
     df.sort_index(inplace=True)
-    df.dropna(inplace=True)
+    df.dropna(subset=["Open", "High", "Low", "Close"], inplace=True)
     return add_all_indicators(df)
 
 
@@ -1900,6 +1922,157 @@ elif page == "⬇️ Export":
             use_container_width=True,
         )
         st.info("Your data is safely stored in Supabase Cloud ☁️ — no laptop needed! Download is just a backup copy.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ██  PAGE: 🤖 AI TRADING COACH
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "🤖 AI Trading Coach":
+    st.title("🤖 AI Trading Coach")
+    st.caption("Powered by Google Gemini (free) · Discuss your trades, get step-by-step guidance, ask anything about F&O.")
+    st.markdown("---")
+
+    # ── API key setup ────────────────────────────────────────────────────────
+    try:
+        gemini_key = st.secrets.get("gemini_api_key", "")
+    except Exception:
+        gemini_key = ""
+
+    if not gemini_key:
+        st.warning(
+            "**Gemini API key not found.**\n\n"
+            "To enable the AI coach:\n"
+            "1. Go to [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) — it's **free**, no credit card.\n"
+            "2. Create a key and copy it.\n"
+            "3. In Streamlit Cloud → your app → **Settings → Secrets**, add:\n"
+            "```\ngemini_api_key = \"YOUR_KEY_HERE\"\n```\n"
+            "4. Save & reboot the app.\n\n"
+            "Until then, you can type your key below to try it out right now (not saved anywhere)."
+        )
+        temp_key = st.text_input("🔑 Paste your Gemini API key here (temporary, session only)", type="password")
+        if temp_key:
+            gemini_key = temp_key
+
+    if not gemini_key:
+        st.info("👆 Add your free Gemini API key above to start chatting with the AI Trading Coach.")
+        st.stop()
+
+    # ── Build live context from dashboard data ────────────────────────────────
+    _today_ctx = datetime.now(IST).strftime("%A, %d %b %Y %I:%M %p IST")
+    _vd = build_day_verdict("")
+    _trade_stats = stats  # already computed at top of file
+
+    SYSTEM_PROMPT = """You are an expert Nifty F&O (Futures & Options) trading coach for Indian markets.
+You help retail traders understand NSE options strategies, risk management, trade setups, and discipline.
+You are friendly, practical, and never recommend specific buy/sell calls — instead you teach the process.
+
+Always remind the trader that F&O trading carries high risk and can result in loss of capital.
+Never provide specific financial advice; focus on education, discipline, and process.
+
+Current live context from the trader's dashboard:
+- Date/Time: {dt}
+- Day Verdict: {verdict} ({vdetail})
+- Today's Checks: {passn} passed, {warnn} cautions, {failn} failed
+- Total Trades Logged: {total_trades}
+- Win Rate: {win_rate}%
+- Total Net P&L: Rs {total_pnl:,.0f}
+- Best Trade: Rs {best:,.0f} | Worst Trade: Rs {worst:,.0f}
+- Avg Win: Rs {avg_win:,.0f} | Avg Loss: Rs {avg_loss:,.0f}
+- Reward:Risk Ratio: {rr}
+- Max Drawdown: Rs {mdd:,.0f}
+- Total Charges Paid: Rs {charges:,.0f}
+
+Use this context to give personalised, actionable guidance.
+When the trader asks "should I trade today?" use the Day Verdict to explain.
+When they ask about their stats, reference the numbers above.
+Keep responses concise — under 300 words unless a detailed explanation is requested.
+""".format(
+        dt=_today_ctx,
+        verdict=_vd["verdict"],
+        vdetail=_vd["verdict_detail"],
+        passn=_vd["pass_count"],
+        warnn=_vd["warn_count"],
+        failn=_vd["fail_count"],
+        total_trades=_trade_stats["total_trades"],
+        win_rate=_trade_stats["win_rate"],
+        total_pnl=_trade_stats["total_pnl"],
+        best=_trade_stats["best_trade"],
+        worst=_trade_stats["worst_trade"],
+        avg_win=_trade_stats["avg_win"],
+        avg_loss=_trade_stats["avg_loss"],
+        rr=_trade_stats["reward_risk"],
+        mdd=_trade_stats["max_drawdown"],
+        charges=_trade_stats["total_charges"],
+    )
+
+    # ── Suggested starter questions ───────────────────────────────────────────
+    st.markdown("**💡 Try asking:**")
+    q_cols = st.columns(3)
+    starter_qs = [
+        "Should I trade today?",
+        "What's wrong with my win rate?",
+        "How do I set my stop-loss for NIFTY options?",
+        "Explain ATM vs OTM options",
+        "How do I manage a losing streak?",
+        "What is the 9-gate entry checklist?",
+    ]
+    for i, q in enumerate(starter_qs):
+        if q_cols[i % 3].button(q, key="sq_{}".format(i), use_container_width=True):
+            if "ai_messages" not in st.session_state:
+                st.session_state["ai_messages"] = []
+            st.session_state["ai_messages"].append({"role": "user", "content": q})
+            st.rerun()
+
+    st.markdown("---")
+
+    # ── Chat history ──────────────────────────────────────────────────────────
+    if "ai_messages" not in st.session_state:
+        st.session_state["ai_messages"] = []
+
+    for msg in st.session_state["ai_messages"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # ── Chat input ────────────────────────────────────────────────────────────
+    user_input = st.chat_input("Ask your trading question…")
+
+    if user_input:
+        st.session_state["ai_messages"].append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking…"):
+                try:
+                    import google.generativeai as genai
+                    genai.configure(api_key=gemini_key)
+                    model = genai.GenerativeModel(
+                        model_name="gemini-1.5-flash",
+                        system_instruction=SYSTEM_PROMPT,
+                    )
+                    # Build chat history for context (last 10 turns to stay within token limits)
+                    history_for_api = []
+                    for m in st.session_state["ai_messages"][:-1][-10:]:
+                        history_for_api.append({
+                            "role": "user" if m["role"] == "user" else "model",
+                            "parts": [m["content"]],
+                        })
+                    chat = model.start_chat(history=history_for_api)
+                    response = chat.send_message(user_input)
+                    reply = response.text
+                except Exception as ai_err:
+                    reply = "⚠️ Could not get a response: `{}`. Check your API key or try again.".format(str(ai_err))
+                st.markdown(reply)
+        st.session_state["ai_messages"].append({"role": "assistant", "content": reply})
+
+    # ── Reset button ──────────────────────────────────────────────────────────
+    if st.session_state.get("ai_messages"):
+        if st.button("🗑️ Clear Chat", use_container_width=False):
+            st.session_state["ai_messages"] = []
+            st.rerun()
+
+    st.markdown("---")
+    st.caption("⚠️ AI Trading Coach is for **educational purposes only**. Not financial advice. F&O trading involves significant risk.")
 
 
 # ── Global footer ─────────────────────────────────────────────────────────────
