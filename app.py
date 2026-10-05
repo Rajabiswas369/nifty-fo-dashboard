@@ -2049,7 +2049,7 @@ Keep responses concise — under 300 words unless a detailed explanation is requ
                     import google.generativeai as genai
                     genai.configure(api_key=gemini_key)
                     model = genai.GenerativeModel(
-                        model_name="gemini-1.5-flash",
+                        model_name="gemini-2.0-flash",
                         system_instruction=SYSTEM_PROMPT,
                     )
                     # Build chat history for context (last 10 turns to stay within token limits)
