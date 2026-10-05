@@ -2050,10 +2050,10 @@ Keep responses concise — under 300 words unless a detailed explanation is requ
                     genai.configure(api_key=gemini_key)
                     # Try models in order — fall back if one is deprecated
                     _GEMINI_MODELS = [
-                        "gemini-3.8-flash",
+                        "gemini-1.5-flash",
+                        "gemini-1.5-pro",
                         "gemini-2.5-flash",
-                        "gemini-2.0-flash-lite",
-                        "gemini-1.5-flash-latest",
+                        "gemini-2.0-flash-exp",
                     ]
                     # Build chat history for context (last 10 turns to stay within token limits)
                     history_for_api = []
