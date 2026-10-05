@@ -2048,13 +2048,30 @@ Keep responses concise — under 300 words unless a detailed explanation is requ
                 try:
                     import google.generativeai as genai
                     genai.configure(api_key=gemini_key)
-                    # Try models in order — fall back if one is deprecated
-                    _GEMINI_MODELS = [
+
+                    # Dynamic discovery: query Google AI for currently supported models
+                    supported_models = []
+                    try:
+                        for m in genai.list_models():
+                            if "generateContent" in getattr(m, "supported_generation_methods", []):
+                                supported_models.append(m.name)
+                    except Exception:
+                        pass
+
+                    # Fallback list if list_models() fails
+                    candidate_models = supported_models or [
+                        "models/gemini-2.5-flash",
+                        "models/gemini-1.5-flash",
+                        "models/gemini-1.5-pro",
+                        "models/gemini-pro",
+                        "gemini-2.5-flash",
                         "gemini-1.5-flash",
                         "gemini-1.5-pro",
-                        "gemini-2.5-flash",
-                        "gemini-2.0-flash-exp",
                     ]
+
+                    # Prioritize flash models first for fast responses
+                    candidate_models.sort(key=lambda name: (0 if "flash" in name.lower() else 1))
+
                     # Build chat history for context (last 10 turns to stay within token limits)
                     history_for_api = []
                     for m in st.session_state["ai_messages"][:-1][-10:]:
@@ -2064,10 +2081,12 @@ Keep responses concise — under 300 words unless a detailed explanation is requ
                         })
                     reply = None
                     last_err = ""
-                    for _model_name in _GEMINI_MODELS:
+                    for _model_name in candidate_models:
                         try:
+                            # Strip "models/" prefix if present when passing to GenerativeModel
+                            clean_name = _model_name.replace("models/", "")
                             model = genai.GenerativeModel(
-                                model_name=_model_name,
+                                model_name=clean_name,
                                 system_instruction=SYSTEM_PROMPT,
                             )
                             chat = model.start_chat(history=history_for_api)
@@ -2076,9 +2095,7 @@ Keep responses concise — under 300 words unless a detailed explanation is requ
                             break
                         except Exception as _me:
                             last_err = str(_me)
-                            if "not found" in last_err.lower() or "no longer available" in last_err.lower() or "404" in last_err:
-                                continue
-                            raise
+                            continue
                     if reply is None:
                         reply = "⚠️ All Gemini models unavailable: `{}`. Try again later.".format(last_err)
                 except Exception as ai_err:
