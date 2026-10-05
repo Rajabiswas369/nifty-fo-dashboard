@@ -2048,10 +2048,13 @@ Keep responses concise — under 300 words unless a detailed explanation is requ
                 try:
                     import google.generativeai as genai
                     genai.configure(api_key=gemini_key)
-                    model = genai.GenerativeModel(
-                        model_name="gemini-2.0-flash",
-                        system_instruction=SYSTEM_PROMPT,
-                    )
+                    # Try models in order — fall back if one is deprecated
+                    _GEMINI_MODELS = [
+                        "gemini-3.8-flash",
+                        "gemini-2.5-flash",
+                        "gemini-2.0-flash-lite",
+                        "gemini-1.5-flash-latest",
+                    ]
                     # Build chat history for context (last 10 turns to stay within token limits)
                     history_for_api = []
                     for m in st.session_state["ai_messages"][:-1][-10:]:
@@ -2059,9 +2062,25 @@ Keep responses concise — under 300 words unless a detailed explanation is requ
                             "role": "user" if m["role"] == "user" else "model",
                             "parts": [m["content"]],
                         })
-                    chat = model.start_chat(history=history_for_api)
-                    response = chat.send_message(user_input)
-                    reply = response.text
+                    reply = None
+                    last_err = ""
+                    for _model_name in _GEMINI_MODELS:
+                        try:
+                            model = genai.GenerativeModel(
+                                model_name=_model_name,
+                                system_instruction=SYSTEM_PROMPT,
+                            )
+                            chat = model.start_chat(history=history_for_api)
+                            response = chat.send_message(user_input)
+                            reply = response.text
+                            break
+                        except Exception as _me:
+                            last_err = str(_me)
+                            if "not found" in last_err.lower() or "no longer available" in last_err.lower() or "404" in last_err:
+                                continue
+                            raise
+                    if reply is None:
+                        reply = "⚠️ All Gemini models unavailable: `{}`. Try again later.".format(last_err)
                 except Exception as ai_err:
                     reply = "⚠️ Could not get a response: `{}`. Check your API key or try again.".format(str(ai_err))
                 st.markdown(reply)
