@@ -239,7 +239,7 @@ def _is_supa() -> bool:
         return False
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_trades() -> pd.DataFrame:
     if not _is_supa():
         return st.session_state.get("trades_df", pd.DataFrame(columns=TRADE_COLUMNS))
@@ -257,7 +257,7 @@ def load_trades() -> pd.DataFrame:
         return pd.DataFrame(columns=TRADE_COLUMNS)
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_capital() -> dict:
     if not _is_supa():
         return st.session_state.get("cap_data", {
@@ -503,7 +503,7 @@ def get_summary(df: pd.DataFrame) -> dict:
     }
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=900)
 def load_chart_data(sym, ivl, per):
     import yfinance as yf
     import requests
@@ -630,7 +630,7 @@ def get_time_window(now_ist: datetime) -> dict:
     return {"label": "Unknown", "note": "Check manually.", "status": "closed"}
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=1800)
 def fetch_nifty_gap() -> dict:
     try:
         import yfinance as yf
@@ -749,7 +749,7 @@ def build_day_verdict(manual_ev: str) -> dict:
 # ═════════════════════════════════════════════════════════════════════════════
 # NEWS FETCHER
 # ═════════════════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=1800)
 def fetch_market_news() -> list:
     feeds = [
         ("https://news.google.com/rss/search?q=nifty+RBI+sensex+india+market&hl=en-IN&gl=IN&ceid=IN:en", "Google News"),
@@ -809,8 +809,19 @@ def render_verdict_badge(vdict: dict):
 # ═════════════════════════════════════════════════════════════════════════════
 # LOAD SHARED DATA (trades + capital for records pages)
 # ═════════════════════════════════════════════════════════════════════════════
-trades_df  = load_trades()
-cap_data   = load_capital()
+_RECORDS_PAGES = {
+    "📊 My Records Dashboard", "💰 My Capital", "📓 Log Trade",
+    "🔄 Angel One Sync", "📋 All Trades", "📅 Monthly Report",
+    "📈 Performance", "💸 Expenses", "⬇️ Export", "🤖 AI Trading Coach",
+}
+if page in _RECORDS_PAGES:
+    with st.spinner("Loading your data…"):
+        trades_df = load_trades()
+        cap_data  = load_capital()
+else:
+    trades_df = load_trades()
+    cap_data  = load_capital()
+
 stats      = get_stats(trades_df)
 cap_stats  = get_capital_stats(cap_data)
 closed_df  = trades_df[trades_df["Result"].isin(["WIN","LOSS"])].copy() if not trades_df.empty else pd.DataFrame()
