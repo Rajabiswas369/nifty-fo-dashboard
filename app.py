@@ -736,22 +736,22 @@ def build_day_verdict(manual_ev: str) -> dict:
     passn = sum(1 for _,_,_,p in checks if p is True)
 
     if market_status in ("HOLIDAY","WEEKEND"):
-        v,vi,vbg,vbd,vc = "NSE CLOSED TODAY","🚫","#fef2f2","#fca5a5","#991b1b"
+        v,vi,vbg,vbd,vc = "NSE CLOSED TODAY","🚫","#450a0a","#dc2626","#fca5a5"
         vd = "Market closed. Come back on next trading day."
     elif has_extreme:
-        v,vi,vbg,vbd,vc = "NO TRADE — EXTREME EVENT","🚫","#fef2f2","#fca5a5","#991b1b"
+        v,vi,vbg,vbd,vc = "NO TRADE — EXTREME EVENT","🚫","#450a0a","#dc2626","#fca5a5"
         vd = "High-impact event today. Signals unreliable. Sit out."
     elif tw["status"] in ("closed","avoid"):
-        v,vi,vbg,vbd,vc = "NOT YET / MARKET CLOSED","⏳","#fffbeb","#fcd34d","#92400e"
+        v,vi,vbg,vbd,vc = "NOT YET / MARKET CLOSED","⏳","#422006","#d97706","#fcd34d"
         vd = tw["note"]
     elif fail == 0 and warn <= 1:
-        v,vi,vbg,vbd,vc = "GREEN LIGHT — OK TO TRADE","🟢","#f0fdf4","#86efac","#14532d"
+        v,vi,vbg,vbd,vc = "GREEN LIGHT — OK TO TRADE","🟢","#14532d","#16a34a","#86efac"
         vd = "All checks passed. Use 9-Gate entry checklist before any trade."
     elif fail == 0 and warn >= 2:
-        v,vi,vbg,vbd,vc = "CAUTION — TRADE CAREFULLY","🟡","#fffbeb","#fcd34d","#78350f"
+        v,vi,vbg,vbd,vc = "CAUTION — TRADE CAREFULLY","🟡","#422006","#d97706","#fcd34d"
         vd = "Multiple caution flags. Trade half lot size. Strict 9 Gates."
     else:
-        v,vi,vbg,vbd,vc = "NO TRADE TODAY","🔴","#fef2f2","#fca5a5","#991b1b"
+        v,vi,vbg,vbd,vc = "NO TRADE TODAY","🔴","#450a0a","#dc2626","#fca5a5"
         vd = "Hard stops triggered. Risk > reward today. Sit out."
 
     return dict(verdict=v, verdict_icon=vi, verdict_bg=vbg, verdict_border=vbd,
@@ -1269,8 +1269,8 @@ elif page == "📰 Market News & Verdict":
                 "padding:22px 28px;text-align:center;margin-bottom:20px'>"
                 "<div style='font-size:44px;margin-bottom:6px'>{icon}</div>"
                 "<div style='font-size:24px;font-weight:900;color:{col};margin-bottom:8px'>{v}</div>"
-                "<div style='font-size:14px;color:#374151;line-height:1.8;max-width:560px;margin:0 auto'>{vd}</div>"
-                "<div style='margin-top:14px;font-size:13px;color:#6b7280'>"
+                "<div style='font-size:14px;color:#e5e7eb;line-height:1.8;max-width:560px;margin:0 auto'>{vd}</div>"
+                "<div style='margin-top:14px;font-size:13px;color:#9ca3af'>"
                 "✅ {p} passed | ⚠️ {w} cautions | ❌ {f} failed | {ts}"
                 "</div></div>".format(bg=vbg,bd=vbd,col=vc,icon=vi,v=v,vd=vd,p=p,w=w,f=f,
                                       ts=now_ist.strftime("%d %b %Y  %I:%M %p IST")),
@@ -1288,24 +1288,31 @@ elif page == "📰 Market News & Verdict":
     with left:
         st.subheader("🔍 Today's Checks")
         for icon, label, text, passed in checks:
-            bg = "#dcfce7" if passed is True else ("#fee2e2" if passed is False else "#fef3c7")
-            bd = "#86efac" if passed is True else ("#fca5a5" if passed is False else "#fcd34d")
+            bg = "#14532d" if passed is True else ("#450a0a" if passed is False else "#422006")
+            bd = "#16a34a" if passed is True else ("#dc2626" if passed is False else "#d97706")
+            lc = "#86efac" if passed is True else ("#fca5a5" if passed is False else "#fcd34d")
             st.markdown("<div style='background:{bg};border:1px solid {bd};border-radius:7px;"
                         "padding:9px 13px;margin-bottom:8px;font-size:13px'>"
-                        "<b>{icon} {label}</b><br><span style='color:#374151'>{text}</span></div>".format(
-                            bg=bg,bd=bd,icon=icon,label=label,text=text), unsafe_allow_html=True)
+                        "<b style='color:{lc}'>{icon} {label}</b><br><span style='color:#e5e7eb'>{text}</span></div>".format(
+                            bg=bg,bd=bd,lc=lc,icon=icon,label=label,text=text), unsafe_allow_html=True)
     with right:
         st.subheader("⏱️ Time Window")
-        tw_colors = {"best":"#dcfce7","ok":"#dbeafe","caution":"#fef3c7","avoid":"#f3f4f6","closed":"#f3f4f6"}
+        tw_colors = {
+            "best":    ("#14532d", "#16a34a", "#86efac"),
+            "ok":      ("#1e3a5f", "#2563eb", "#93c5fd"),
+            "caution": ("#422006", "#d97706", "#fcd34d"),
+            "avoid":   ("#1f2937", "#374151", "#9ca3af"),
+            "closed":  ("#1f2937", "#374151", "#9ca3af"),
+        }
         html = "<div style='display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px'>"
         for trange, tlabel, tstatus in [("9:15–9:44","Opening","avoid"),("9:45–10:29","Early","caution"),
                                           ("10:30–12:59","Prime ✅","best"),("1:00–2:29","Mid ✅","ok"),
                                           ("2:30–3:14","Late ⚠️","caution"),("3:15–3:30","Close","avoid")]:
             is_cur = any(x in tw["label"] for x in [trange.split("–")[0], tlabel.replace(" ✅","").replace(" ⚠️","")])
-            bg = tw_colors.get(tstatus,"#f3f4f6")
-            bdr = "2px solid #1d4ed8" if is_cur else "1px solid #e5e7eb"
-            html += "<div style='background:{bg};border:{bdr};border-radius:6px;padding:6px 9px;font-size:11px;font-weight:{fw};text-align:center'>{r}<br>{l}</div>".format(
-                bg=bg,bdr=bdr,fw="700" if is_cur else "400",r=trange,l=tlabel)
+            tile_bg, tile_bd, tile_tc = tw_colors.get(tstatus, ("#1f2937","#374151","#9ca3af"))
+            bdr = "2px solid #60a5fa" if is_cur else "1px solid {}".format(tile_bd)
+            html += "<div style='background:{bg};border:{bdr};border-radius:6px;padding:6px 9px;font-size:11px;font-weight:{fw};text-align:center;color:{tc}'>{r}<br>{l}</div>".format(
+                bg=tile_bg,bdr=bdr,fw="700" if is_cur else "500",tc=tile_tc,r=trange,l=tlabel)
         html += "</div>"
         st.markdown(html, unsafe_allow_html=True)
         st.caption("Current: **{}** — {}".format(tw["label"], tw["note"]))
