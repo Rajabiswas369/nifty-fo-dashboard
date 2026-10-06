@@ -207,7 +207,7 @@ if _is_trading_page:
         _refresh_interval = st.sidebar.select_slider(
             "Refresh every",
             options=[30, 60, 120, 300],
-            value=60,
+            value=30,
             format_func=lambda x: f"{x}s",
         )
         _refresh_count = st_autorefresh(interval=_refresh_interval * 1000, key="live_autorefresh")
@@ -555,7 +555,7 @@ def get_summary(df: pd.DataFrame) -> dict:
     }
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def load_chart_data(sym, ivl, per):
     import yfinance as yf
     ticker = NSE_SYMBOLS.get(sym, sym)
@@ -677,7 +677,7 @@ def get_time_window(now_ist: datetime) -> dict:
     return {"label": "Unknown", "note": "Check manually.", "status": "closed"}
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def fetch_nifty_gap() -> dict:
     try:
         import yfinance as yf
