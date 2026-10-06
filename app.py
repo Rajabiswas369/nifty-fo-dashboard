@@ -443,63 +443,88 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     vol_all_nan = raw_vol.isna().all()
     vol = raw_vol if not vol_all_nan else df["Volume"].astype(float)
 
-    df["EMA_9"]   = _ta.trend.EMAIndicator(close, 9).ema_indicator()
-    df["EMA_21"]  = _ta.trend.EMAIndicator(close, 21).ema_indicator()
-    df["EMA_50"]  = _ta.trend.EMAIndicator(close, 50).ema_indicator()
-    # EMA_200 needs 200+ bars. For shorter periods (1h/1mo = ~130 bars), back-fill
-    # with EMA_50 so dropna() does not wipe the entire DataFrame.
-    ema200_raw = _ta.trend.EMAIndicator(close, 200).ema_indicator()
+    df["EMA_9"]   = _ta.trend.EMAIndicator(close, 9).ema_indicator().fillna(close)
+    df["EMA_21"]  = _ta.trend.EMAIndicator(close, 21).ema_indicator().fillna(df["EMA_9"])
+    df["EMA_50"]  = _ta.trend.EMAIndicator(close, 50).ema_indicator().fillna(df["EMA_21"])
+    ema200_raw    = _ta.trend.EMAIndicator(close, 200).ema_indicator()
     df["EMA_200"] = ema200_raw.fillna(df["EMA_50"])
 
     macd = _ta.trend.MACD(close, 26, 12, 9)
-    df["MACD"] = macd.macd(); df["MACD_signal"] = macd.macd_signal(); df["MACD_hist"] = macd.macd_diff()
+    df["MACD"] = macd.macd().fillna(0.0)
+    df["MACD_signal"] = macd.macd_signal().fillna(0.0)
+    df["MACD_hist"] = macd.macd_diff().fillna(0.0)
 
-    adx = _ta.trend.ADXIndicator(high, low, close, 14)
-    df["ADX"] = adx.adx(); df["ADX_pos"] = adx.adx_pos(); df["ADX_neg"] = adx.adx_neg()
+    try:
+        adx = _ta.trend.ADXIndicator(high, low, close, 14)
+        df["ADX"] = adx.adx().fillna(20.0)
+        df["ADX_pos"] = adx.adx_pos().fillna(0.0)
+        df["ADX_neg"] = adx.adx_neg().fillna(0.0)
+    except Exception:
+        df["ADX"] = pd.Series(20.0, index=df.index)
+        df["ADX_pos"] = pd.Series(0.0, index=df.index)
+        df["ADX_neg"] = pd.Series(0.0, index=df.index)
 
     df = _supertrend(df)
+    if "ST_trend" in df.columns:
+        df["ST_trend"] = df["ST_trend"].bfill().fillna(1.0)
+        df["ST_value"] = df["ST_value"].bfill().fillna(close)
 
-    df["RSI"] = _ta.momentum.RSIIndicator(close, 14).rsi()
+    try:
+        df["RSI"] = _ta.momentum.RSIIndicator(close, 14).rsi().fillna(50.0)
+    except Exception:
+        df["RSI"] = pd.Series(50.0, index=df.index)
 
-    bb = _ta.volatility.BollingerBands(close, 20, 2)
-    df["BB_upper"] = bb.bollinger_hband(); df["BB_lower"] = bb.bollinger_lband()
-    df["BB_pct"]   = bb.bollinger_pband()
-    df["ATR"] = _ta.volatility.AverageTrueRange(high, low, close, 14).average_true_range()
+    try:
+        bb = _ta.volatility.BollingerBands(close, 20, 2)
+        df["BB_upper"] = bb.bollinger_hband().fillna(close * 1.02)
+        df["BB_lower"] = bb.bollinger_lband().fillna(close * 0.98)
+        df["BB_pct"]   = bb.bollinger_pband().fillna(0.5)
+    except Exception:
+        df["BB_upper"] = close * 1.02
+        df["BB_lower"] = close * 0.98
+        df["BB_pct"] = pd.Series(0.5, index=df.index)
+
+    try:
+        df["ATR"] = _ta.volatility.AverageTrueRange(high, low, close, 14).average_true_range().bfill().fillna(0.0)
+    except Exception:
+        df["ATR"] = pd.Series(0.0, index=df.index)
 
     if vol_all_nan:
-        # Volume unavailable for this interval/symbol — use rolling mean as proxy
-        df["VWAP"] = close.rolling(14, min_periods=1).mean()
+        df["VWAP"] = close.rolling(14, min_periods=1).mean().fillna(close)
         df["CMF"]  = pd.Series(0.0, index=df.index)
     else:
-        df["VWAP"] = _ta.volume.VolumeWeightedAveragePrice(high, low, close, vol).volume_weighted_average_price()
-        df["CMF"]  = _ta.volume.ChaikinMoneyFlowIndicator(high, low, close, vol, 20).chaikin_money_flow()
-        # Pandas CoW-safe fill (no inplace on a column slice)
-        df["VWAP"] = df["VWAP"].ffill()
-        df["CMF"]  = df["CMF"].ffill()
+        try:
+            df["VWAP"] = _ta.volume.VolumeWeightedAveragePrice(high, low, close, vol).volume_weighted_average_price().bfill().fillna(close)
+            df["CMF"]  = _ta.volume.ChaikinMoneyFlowIndicator(high, low, close, vol, 20).chaikin_money_flow().fillna(0.0)
+        except Exception:
+            df["VWAP"] = close
+            df["CMF"] = pd.Series(0.0, index=df.index)
 
     df["EMA_cross"]  = np.where(df["EMA_9"] > df["EMA_21"], 1, -1)
     df["MACD_cross"] = np.where(df["MACD"]  > df["MACD_signal"], 1, -1)
-    df["RSI_zone"]   = pd.cut(df["RSI"], bins=[0,30,50,70,100],
-                               labels=["Oversold","Bearish","Bullish","Overbought"])
-    df.dropna(inplace=True)
+    df["RSI_zone"]   = pd.cut(df["RSI"], bins=[-1, 30, 50, 70, 101],
+                               labels=["Oversold", "Bearish", "Bullish", "Overbought"])
+    df.dropna(subset=["Close"], inplace=True)
     return df
 
 
 def get_summary(df: pd.DataFrame) -> dict:
+    if df.empty:
+        raise ValueError("Empty dataframe passed to get_summary")
     last = df.iloc[-1]
     return {
         "close":       round(float(last["Close"]),       2),
-        "rsi":         round(float(last["RSI"]),         2),
-        "macd":        round(float(last["MACD"]),        2),
-        "macd_signal": round(float(last["MACD_signal"]), 2),
-        "adx":         round(float(last["ADX"]),         2),
-        "atr":         round(float(last["ATR"]),         2),
-        "bb_pct":      round(float(last["BB_pct"]),      2),
-        "supertrend":  "BULLISH" if last["ST_trend"] == 1 else "BEARISH",
-        "ema_cross":   "BULLISH" if last["EMA_cross"] == 1 else "BEARISH",
-        "rsi_zone":    str(last["RSI_zone"]),
-        "vwap":        round(float(last["VWAP"]),  2),
-        "cmf":         round(float(last["CMF"]),   4),
+        "rsi":         round(float(last.get("RSI", 50.0)),         2),
+        "macd":        round(float(last.get("MACD", 0.0)),        2),
+        "macd_signal": round(float(last.get("MACD_signal", 0.0)), 2),
+        "adx":         round(float(last.get("ADX", 20.0)),         2),
+        "atr":         round(float(last.get("ATR", 0.0)),         2),
+        "bb_pct":      round(float(last.get("BB_pct", 0.5)),      2),
+        "supertrend":  "BULLISH" if last.get("ST_trend", 1) == 1 else "BEARISH",
+        "ema_cross":   "BULLISH" if last.get("EMA_cross", 1) == 1 else "BEARISH",
+        "rsi_zone":    str(last.get("RSI_zone", "Bullish")),
+        "vwap":        round(float(last.get("VWAP", last["Close"])),  2),
+        "cmf":         round(float(last.get("CMF", 0.0)),   4),
     }
 
 
@@ -971,11 +996,11 @@ if page == "📈 Signal Dashboard":
         rows = []
         for sym in watchlist:
             try:
-                wdf = load_chart_data(sym, "1d", "1mo")
+                wdf = load_chart_data(sym, "1d", "1y")
                 s   = get_summary(wdf)
                 dec = compute_decision(s)
-                chg = wdf["Close"].iloc[-1] - wdf["Close"].iloc[-2]
-                pct = (chg / wdf["Close"].iloc[-2]) * 100
+                chg = wdf["Close"].iloc[-1] - wdf["Close"].iloc[-2] if len(wdf) >= 2 else 0.0
+                pct = (chg / wdf["Close"].iloc[-2]) * 100 if len(wdf) >= 2 and wdf["Close"].iloc[-2] != 0 else 0.0
                 rsi_tag = ("🔴 {:.1f} OB".format(s["rsi"]) if s["rsi"]>65 else
                             ("🟢 {:.1f} OS".format(s["rsi"]) if s["rsi"]<35 else
                              ("🟢 {:.1f}".format(s["rsi"]) if s["rsi"]>55 else
@@ -988,10 +1013,10 @@ if page == "📈 Signal Dashboard":
                     "ADX":       "{:.1f} {}".format(s["adx"],"Strong" if s["adx"]>25 else "Weak"),
                     "Supertrend":s["supertrend"],
                     "MACD":      "Bullish" if s["macd"]>s["macd_signal"] else "Bearish",
-                    "Signal":    {"PUT":"🔴 PUT","CALL":"🟢 CALL","WAIT":"🟡 WAIT"}[dec["direction"]],
-                    "Confidence":"{:.0f}%".format(dec["confidence"]*100),
+                    "Signal":    {"PUT":"🔴 PUT","CALL":"🟢 CALL","WAIT":"🟡 WAIT"}.get(dec.get("direction", "WAIT"), "🟡 WAIT"),
+                    "Confidence":"{:.0f}%".format(dec.get("confidence", 0.5)*100),
                 })
-            except Exception:
+            except Exception as _e:
                 rows.append({"Symbol":sym,"LTP (Rs)":"Error","Change %":"-","RSI":"-",
                              "ADX":"-","Supertrend":"-","MACD":"-","Signal":"-","Confidence":"-"})
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
