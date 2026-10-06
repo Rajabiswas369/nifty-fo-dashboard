@@ -26,6 +26,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pytz
+from streamlit_autorefresh import st_autorefresh
 
 from angel_sync import (
     render_angel_sync_panel, is_angel_configured,
@@ -190,6 +191,32 @@ else:
     symbol = "NIFTY50"; interval = "1d"; period = "1y"
     total_capital = 50000; risk_per_trade = 2; lot_size = 75
     watchlist = []; manual_event = ""; refresh = False
+
+# ── Smart Auto-Refresh ───────────────────────────────────────────────────────
+# Only auto-refresh on trading pages and only during NSE market hours (9:15–15:30 IST)
+_ist_now = datetime.now(pytz.timezone("Asia/Kolkata"))
+_market_open  = _ist_now.replace(hour=9,  minute=15, second=0, microsecond=0)
+_market_close = _ist_now.replace(hour=15, minute=30, second=0, microsecond=0)
+_is_trading_page = page in ("📈 Signal Dashboard", "🕹️ Angel One Live Cockpit", "📰 Market News & Verdict")
+_is_market_hours = (_market_open <= _ist_now <= _market_close) and (_ist_now.weekday() < 5)
+
+if _is_trading_page:
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**⚡ Live Auto-Refresh**")
+    if _is_market_hours:
+        _refresh_interval = st.sidebar.select_slider(
+            "Refresh every",
+            options=[30, 60, 120, 300],
+            value=60,
+            format_func=lambda x: f"{x}s",
+        )
+        _refresh_count = st_autorefresh(interval=_refresh_interval * 1000, key="live_autorefresh")
+        st.sidebar.success(f"🟢 Market OPEN — refreshing every **{_refresh_interval}s**")
+        st.sidebar.caption(f"Refresh #{_refresh_count} | IST: {_ist_now.strftime('%H:%M:%S')}")
+    else:
+        st_autorefresh(interval=999999999, key="live_autorefresh")   # effectively OFF
+        st.sidebar.warning("🔴 Market CLOSED — auto-refresh paused")
+        st.sidebar.caption(f"Market opens Mon–Fri 9:15 AM IST")
 
 # Cloud connection status in sidebar
 st.sidebar.markdown("---")
@@ -528,7 +555,7 @@ def get_summary(df: pd.DataFrame) -> dict:
     }
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=60)
 def load_chart_data(sym, ivl, per):
     import yfinance as yf
     ticker = NSE_SYMBOLS.get(sym, sym)
@@ -650,7 +677,7 @@ def get_time_window(now_ist: datetime) -> dict:
     return {"label": "Unknown", "note": "Check manually.", "status": "closed"}
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=60)
 def fetch_nifty_gap() -> dict:
     try:
         import yfinance as yf
