@@ -334,7 +334,8 @@ def save_trades(df: pd.DataFrame):
                     "capital_used","gross_pnl","brokerage","stt","other_charges","net_pnl","entry_rsi","entry_adx"]:
             if col in rows.columns:
                 rows[col] = pd.to_numeric(rows[col], errors="coerce")
-        rows = rows.where(pd.notnull(rows), None)
+        rows = rows.replace([float("inf"), float("-inf")], pd.NA)
+        rows = rows.astype(object).where(pd.notnull(rows), None)
         for record in rows.to_dict("records"):
             client.table("trades").insert(record).execute()
         st.cache_data.clear()
