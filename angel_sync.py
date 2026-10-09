@@ -130,6 +130,14 @@ def fetch_angel_trades(days_back: int = 1) -> list:
     return all_trades
 
 
+def _format_expiry(expiry_raw: str) -> str:
+    """Angel One gives '13OCT2026'; the app stores '13 Oct 2026' (DB-safe)."""
+    try:
+        return datetime.strptime(str(expiry_raw).strip().upper(), "%d%b%Y").strftime("%d %b %Y")
+    except ValueError:
+        return str(expiry_raw)
+
+
 def _parse_angel_trade(raw: dict) -> dict:
     """Convert Angel One raw trade dict to dashboard trade format."""
     symbol = raw.get("tradingsymbol", "")
@@ -154,7 +162,7 @@ def _parse_angel_trade(raw: dict) -> dict:
         "qty":         qty,
         "price":       price,
         "lot_size":    lot_size,
-        "expiry":      raw.get("expirydate", ""),
+        "expiry":      _format_expiry(raw.get("expirydate", "")),
         "order_type":  raw.get("transactiontype", ""),
         "trade_time":  raw.get("filltime", raw.get("updatetime", "")),
         "exchange":    raw.get("exchange", "NFO"),
@@ -301,7 +309,11 @@ Go to **share.streamlit.io → your app → ⋮ → Settings → Secrets**, past
                     with st.expander("🔍 Raw API data (first trade)", expanded=False):
                         st.json(raw[0])
                 saved, skipped, msg = match_and_save_trades(raw, load_fn, save_fn, columns)
-                if saved > 0:
+                save_err = st.session_state.get("_save_error")
+                if save_err:
+                    # Keep the real database error on screen (no st.rerun, which would wipe it)
+                    st.error("Trade found but NOT saved. Database error: {}".format(save_err))
+                elif saved > 0:
                     st.success(msg)
                     st.balloons()
                     st.rerun()
