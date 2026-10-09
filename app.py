@@ -318,6 +318,7 @@ def load_capital() -> dict:
 
 def save_trades(df: pd.DataFrame):
     load_trades.clear()
+    st.session_state.pop("_save_error", None)
     if not _is_supa():
         st.session_state["trades_df"] = df.copy()
         return
@@ -338,6 +339,7 @@ def save_trades(df: pd.DataFrame):
             client.table("trades").insert(record).execute()
         st.cache_data.clear()
     except Exception as e:
+        st.session_state["_save_error"] = str(e)
         st.error("Could not save trades: {}".format(e))
 
 
