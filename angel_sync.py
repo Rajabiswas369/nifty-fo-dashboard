@@ -3,6 +3,7 @@ angel_sync.py — Angel One SmartAPI auto trade fetcher.
 Fetches your executed F&O trades from Angel One and saves to Supabase Cloud.
 """
 
+import re
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -274,9 +275,62 @@ def match_and_save_trades(raw_trades: list, load_fn, save_fn, columns: list) -> 
     return saved, skipped, msg
 
 
-def render_angel_sync_panel(load_fn=None, save_fn=None, columns=None, *args, **kwargs):
+def apply_synced_trades_to_capital(trades_df, cap_load_fn, cap_save_fn) -> tuple:
+    """
+    Add the Net P&L of today's closed, Angel-synced trades to the capital balance.
+    Each trade's OrderID is stamped in the capital history note, so a trade is
+    never applied twice (safe to run on every sync).
+    Returns (trades_applied, total_pnl_applied).
+    """
+    if trades_df is None or trades_df.empty or "Notes" not in trades_df.columns:
+        return 0, 0.0
+
+    cap     = cap_load_fn()
+    history = cap.setdefault("history", [])
+    applied_ids = set(re.findall(r"OrderID:(\w+)", " ".join(str(h.get("note", "")) for h in history)))
+    today   = datetime.now().strftime("%Y-%m-%d")
+    balance = float(cap.get("current_capital", 0) or 0)
+    count   = 0
+    total   = 0.0
+
+    for _, r in trades_df.iterrows():
+        m = re.search(r"Auto-synced from Angel One \| OrderID:(\w+)", str(r.get("Notes", "")))
+        if not m:
+            continue
+        oid = m.group(1)
+        if oid in applied_ids or str(r.get("Date", ""))[:10] != today:
+            continue
+        if str(r.get("Result", "")).upper() not in ("WIN", "LOSS"):
+            continue
+        net = pd.to_numeric(r.get("Net P&L"), errors="coerce")
+        if pd.isna(net):
+            continue
+
+        balance = round(balance + float(net), 2)
+        history.append({
+            "date":    today,
+            "balance": balance,
+            "note":    "[TRADE] {} {} Net Rs {:,.2f} | OrderID:{}".format(
+                           r.get("Option Type", ""), r.get("Strike", ""), float(net), oid),
+        })
+        applied_ids.add(oid)
+        count += 1
+        total += float(net)
+
+    if count:
+        cap["current_capital"] = balance
+        cap_save_fn(cap)
+    return count, round(total, 2)
+
+
+def render_angel_sync_panel(load_fn=None, save_fn=None, columns=None,
+                            cap_load_fn=None, cap_save_fn=None, *args, **kwargs):
     """Render the Angel One sync UI panel inside the Streamlit app."""
     st.subheader("🔄 Auto-Sync from Angel One")
+
+    flash = st.session_state.pop("_sync_flash", None)
+    if flash:
+        st.success(flash)
 
     if not is_angel_configured():
         st.warning("⚠️ Angel One API not configured yet.")
@@ -316,12 +370,19 @@ Go to **share.streamlit.io → your app → ⋮ → Settings → Secrets**, past
                 if save_err:
                     # Keep the real database error on screen (no st.rerun, which would wipe it)
                     st.error("Trade found but NOT saved. Database error: {}".format(save_err))
-                elif saved > 0:
-                    st.success(msg)
-                    st.balloons()
-                    st.rerun()
                 else:
-                    st.info(msg)
+                    cap_n, cap_total = 0, 0.0
+                    if cap_load_fn and cap_save_fn:
+                        cap_n, cap_total = apply_synced_trades_to_capital(load_fn(), cap_load_fn, cap_save_fn)
+                    if saved > 0 or cap_n > 0:
+                        flash = msg
+                        if cap_n:
+                            flash += " 💰 Capital updated: {:+,.2f} from {} trade(s).".format(cap_total, cap_n)
+                        st.session_state["_sync_flash"] = flash
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.info(msg)
             except Exception as e:
                 st.error("Sync failed: {}".format(str(e)))
                 with st.expander("Error details"):
