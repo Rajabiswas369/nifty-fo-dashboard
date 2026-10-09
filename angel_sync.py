@@ -76,11 +76,16 @@ def fetch_angel_trades(days_back: int = 1) -> list:
     """
     Fetch executed trades from Angel One.
     - tradeBook() = today's executed trades only
-    - orderBook() = all orders including past days (we filter COMPLETE ones)
-    We try both and merge, so Thursday/older trades are included.
+    - orderBook() = today's orders (we filter COMPLETE ones)
+    Angel One rate-limits these calls (~1/sec), so we pause between them.
+    If both fail and nothing is returned, raise with the real API error
+    instead of silently reporting "no trades".
     """
+    import time
+
     obj = _login_angel()
     all_trades = []
+    errors = []
 
     # 1. Trade book — today's filled trades
     try:
@@ -88,13 +93,21 @@ def fetch_angel_trades(days_back: int = 1) -> list:
         if trade_book and trade_book.get("status") is not False:
             trades = trade_book.get("data", []) or []
             all_trades.extend(trades)
-    except Exception:
-        pass
+        else:
+            errors.append("tradeBook: {}".format(
+                (trade_book or {}).get("message", "no response")))
+    except Exception as e:
+        errors.append("tradeBook: {}".format(e))
 
-    # 2. Order book — historical orders (filter only COMPLETE/filled ones)
+    time.sleep(1.2)  # avoid Angel One "exceeding access rate" rejection
+
+    # 2. Order book — filled orders (filter only COMPLETE/filled ones)
     try:
         order_book = obj.orderBook()
-        if order_book and order_book.get("status") is not False:
+        if not order_book or order_book.get("status") is False:
+            errors.append("orderBook: {}".format(
+                (order_book or {}).get("message", "no response")))
+        else:
             orders = order_book.get("data", []) or []
             # Only keep completely filled orders
             filled = [o for o in orders if str(o.get("status","")).upper() in
@@ -108,8 +121,11 @@ def fetch_angel_trades(days_back: int = 1) -> list:
                     o["fillsize"]   = o.get("filledshares", o.get("quantity", 0))
                     o["filltime"]   = o.get("updatetime", "")
                     all_trades.append(o)
-    except Exception:
-        pass
+    except Exception as e:
+        errors.append("orderBook: {}".format(e))
+
+    if not all_trades and errors:
+        raise Exception("Angel One API error — " + " | ".join(errors))
 
     return all_trades
 
