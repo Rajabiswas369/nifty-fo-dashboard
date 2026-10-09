@@ -200,6 +200,7 @@ def match_and_save_trades(raw_trades: list, load_fn, save_fn, columns: list) -> 
         existing_ids = set(extracted.dropna().tolist())
 
     saved = 0; skipped = 0; rows = []
+    skip_reasons = []
 
     def _next_num(df):
         if df.empty or df["Trade #"].isna().all():
@@ -212,6 +213,7 @@ def match_and_save_trades(raw_trades: list, load_fn, save_fn, columns: list) -> 
 
         if not buys:
             skipped += 1
+            skip_reasons.append("{}: no BUY found (only SELL)".format(symbol))
             continue
 
         buy      = buys[0]
@@ -220,6 +222,7 @@ def match_and_save_trades(raw_trades: list, load_fn, save_fn, columns: list) -> 
 
         if order_id in existing_ids:
             skipped += 1
+            skip_reasons.append("{}: already saved in your records (OrderID {})".format(symbol, order_id))
             continue
 
         entry_price = buy["price"]
@@ -267,7 +270,7 @@ def match_and_save_trades(raw_trades: list, load_fn, save_fn, columns: list) -> 
 
     msg = "✅ {} new trade(s) synced from Angel One!".format(saved)
     if skipped:
-        msg += " ({} already existed or incomplete)".format(skipped)
+        msg += " ({} skipped — {})".format(skipped, "; ".join(skip_reasons))
     return saved, skipped, msg
 
 
