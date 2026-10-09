@@ -1799,7 +1799,8 @@ elif page == "🔄 Angel One Sync":
                 st.code(traceback.format_exc())
     st.markdown("---")
 
-    render_angel_sync_panel(load_fn=load_trades, save_fn=save_trades, columns=TRADE_COLUMNS)
+    render_angel_sync_panel(load_fn=load_trades, save_fn=save_trades, columns=TRADE_COLUMNS,
+                            cap_load_fn=load_capital, cap_save_fn=save_capital)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
