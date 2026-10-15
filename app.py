@@ -1258,29 +1258,43 @@ if page == "📈 Signal Dashboard":
     atr   = summary["atr"] if summary["atr"] > 0 else ltp * 0.005
     dirn  = precision_signal.get("direction", decision["direction"])
 
-    # ATR-based levels for the underlying (Nifty/stock spot price)
+    # Scale ATR to the selected timeframe so SL/targets are realistic for short trades.
+    # Daily ATR (~250 pts for Nifty) is far too wide for a 5–15 min scalp.
+    # We convert daily ATR → per-candle ATR using sqrt(trading_minutes / 375).
+    _tf_scale = {
+        "5m":  round((5  / 375) ** 0.5, 4),   # ~11% of daily ATR  → ~25–30 pts
+        "15m": round((15 / 375) ** 0.5, 4),   # ~20% of daily ATR  → ~45–55 pts
+        "1h":  round((60 / 375) ** 0.5, 4),   # ~40% of daily ATR  → ~90–110 pts
+        "1d":  1.0,                            # full daily ATR
+    }
+    atr_scaled = round(atr * _tf_scale.get(interval, 1.0), 1)
+
+    # Use the scaled ATR — but floor it to at least 0.3% of LTP so it's never zero
+    atr_use = max(atr_scaled, round(ltp * 0.003, 1))
+
+    # SL = 1x scaled ATR, T1 = 1.5x, T2 = 2.5x  (tight for intraday)
     if dirn == "CALL":
         entry_price  = round(ltp, 2)
-        sl_price     = round(ltp - atr * 1.0, 2)
-        target1      = round(ltp + atr * 1.5, 2)
-        target2      = round(ltp + atr * 3.0, 2)
-        max_loss_pts = round(ltp - sl_price, 2)
+        sl_price     = round(ltp - atr_use * 1.0, 2)
+        target1      = round(ltp + atr_use * 1.5, 2)
+        target2      = round(ltp + atr_use * 2.5, 2)
+        max_loss_pts = round(ltp - sl_price, 1)
         sl_label     = "Stop Loss (below entry)"
-        t1_label     = "Target 1 (+1.5x ATR)"
-        t2_label     = "Target 2 (+3x ATR)"
+        t1_label     = "Target 1 (+1.5x)"
+        t2_label     = "Target 2 (+2.5x)"
         sl_col       = "#ef4444"; t_col = "#10b981"
         dirn_badge   = "<span style='background:#052e16;color:#4ade80;border:2px solid #16a34a;border-radius:8px;padding:6px 20px;font-size:22px;font-weight:900;letter-spacing:1px'>🟢 THIS IS A CALL TRADE</span>"
         dirn_note    = "You are buying a <b>CALL option</b>. Profit when market goes UP."
         prem_action  = "BUY CALL OPTION PREMIUM AT"
     elif dirn == "PUT":
         entry_price  = round(ltp, 2)
-        sl_price     = round(ltp + atr * 1.0, 2)
-        target1      = round(ltp - atr * 1.5, 2)
-        target2      = round(ltp - atr * 3.0, 2)
-        max_loss_pts = round(sl_price - ltp, 2)
+        sl_price     = round(ltp + atr_use * 1.0, 2)
+        target1      = round(ltp - atr_use * 1.5, 2)
+        target2      = round(ltp - atr_use * 2.5, 2)
+        max_loss_pts = round(sl_price - ltp, 1)
         sl_label     = "Stop Loss (above entry)"
-        t1_label     = "Target 1 (-1.5x ATR)"
-        t2_label     = "Target 2 (-3x ATR)"
+        t1_label     = "Target 1 (-1.5x)"
+        t2_label     = "Target 2 (-2.5x)"
         sl_col       = "#ef4444"; t_col = "#10b981"
         dirn_badge   = "<span style='background:#2e0505;color:#f87171;border:2px solid #dc2626;border-radius:8px;padding:6px 20px;font-size:22px;font-weight:900;letter-spacing:1px'>🔴 THIS IS A PUT TRADE</span>"
         dirn_note    = "You are buying a <b>PUT option</b>. Profit when market goes DOWN."
@@ -1292,6 +1306,7 @@ if page == "📈 Signal Dashboard":
         dirn_badge = "<span style='background:#1c1c0a;color:#fde047;border:2px solid #ca8a04;border-radius:8px;padding:6px 20px;font-size:22px;font-weight:900'>🟡 WAIT — NO TRADE YET</span>"
         dirn_note  = "No clear direction. Do not enter. Watch for next candle."
         prem_action = "OPTION PREMIUM"
+        atr_use = atr_scaled
 
     # CALL / PUT badge
     st.markdown(
@@ -1300,8 +1315,8 @@ if page == "📈 Signal Dashboard":
         "</div>".format(badge=dirn_badge, note=dirn_note),
         unsafe_allow_html=True)
 
-    # Option premium levels (ATM premium estimated from ATR)
-    prem_entry = round(atr * 0.8, 1)
+    # Option premium levels — use scaled ATR for realistic premium moves
+    prem_entry = round(atr_use * 0.8, 1)
     prem_sl    = round(prem_entry * 0.70, 1)
     prem_t1    = round(prem_entry * 1.50, 1)
     prem_t2    = round(prem_entry * 2.20, 1)
@@ -1311,8 +1326,10 @@ if page == "📈 Signal Dashboard":
         "<div style='background:#0f172a;border:2px solid #334155;border-radius:10px;"
         "padding:18px 22px;margin-bottom:10px'>"
         "<div style='font-size:13px;color:#94a3b8;margin-bottom:12px'>"
-        "Spot price levels based on ATR = {atr:.1f} pts. "
-        "Option premium levels are ATR-estimated — verify live premium in your broker app before entering."
+        "Levels scaled for <b style='color:#fbbf24'>{ivl} timeframe</b> — "
+        "Scaled ATR = <b style='color:#fbbf24'>{atr_s:.0f} pts</b> "
+        "(Daily ATR {atr:.0f} pts scaled down to {ivl} candle size). "
+        "Verify live premium in your broker before entering."
         "</div>"
         "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px'>"
 
@@ -1336,7 +1353,8 @@ if page == "📈 Signal Dashboard":
         "<div style='font-size:24px;font-weight:900;color:{t_col}'>Rs {t2:.2f}</div>"
         "<div style='font-size:11px;color:#64748b'>Trail SL for remaining qty</div></div>"
         "</div></div>".format(
-            atr=atr, entry=entry_price, sl=sl_price, loss=max_loss_pts,
+            atr=atr, atr_s=atr_use, ivl=interval,
+            entry=entry_price, sl=sl_price, loss=max_loss_pts,
             t1=target1, t2=target2,
             sl_col=sl_col, t_col=t_col,
             sl_label=sl_label, t1_label=t1_label, t2_label=t2_label,
