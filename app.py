@@ -1352,7 +1352,7 @@ if page == "📈 Signal Dashboard":
         "<div style='font-size:24px;font-weight:900;color:{t_col}'>Rs {t2:.2f}</div>"
         "<div style='font-size:11px;color:#64748b'>Trail SL for remaining qty</div></div>"
         "</div></div>".format(
-            atr=raw_atr, atr_s=atr_use, ivl=interval,
+            atr_s=atr_use, ivl=interval,
             entry=entry_price, sl=sl_price, loss=max_loss_pts,
             t1=target1, t2=target2,
             sl_col=sl_col, t_col=t_col,
