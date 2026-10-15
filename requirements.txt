@@ -14,3 +14,4 @@ openpyxl>=3.1.0
 logzero>=1.7.0
 websocket-client>=1.6.0
 google-generativeai>=0.5.0
+# redeploy-trigger
