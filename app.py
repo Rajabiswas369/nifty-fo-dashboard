@@ -1255,46 +1255,46 @@ if page == "📈 Signal Dashboard":
     # ── Entry / Exit / Stop-Loss Price Panel ──────────────────────────────────
     st.subheader("💰 Entry Price · Exit Targets · Stop Loss")
     ltp   = summary["close"]
-    atr   = summary["atr"] if summary["atr"] > 0 else ltp * 0.005
     dirn  = precision_signal.get("direction", decision["direction"])
 
-    # Scale ATR to the selected timeframe so SL/targets are realistic for short trades.
-    # Daily ATR (~250 pts for Nifty) is far too wide for a 5–15 min scalp.
-    # We convert daily ATR → per-candle ATR using sqrt(trading_minutes / 375).
-    _tf_scale = {
-        "5m":  round((5  / 375) ** 0.5, 4),   # ~11% of daily ATR  → ~25–30 pts
-        "15m": round((15 / 375) ** 0.5, 4),   # ~20% of daily ATR  → ~45–55 pts
-        "1h":  round((60 / 375) ** 0.5, 4),   # ~40% of daily ATR  → ~90–110 pts
-        "1d":  1.0,                            # full daily ATR
-    }
-    atr_scaled = round(atr * _tf_scale.get(interval, 1.0), 1)
+    # summary["atr"] is already calculated on the selected timeframe candles
+    # (yfinance downloads at the selected interval, so ATR reflects that candle size).
+    # Typical values: 5m ~15–25 pts, 15m ~25–45 pts, 1h ~60–90 pts, 1d ~180–250 pts.
+    # We cap it: for intraday (5m/15m/1h) never wider than 0.4% of LTP as SL.
+    raw_atr = summary["atr"] if summary["atr"] > 0 else ltp * 0.003
+    if interval in ("5m", "15m"):
+        atr_use = min(raw_atr, round(ltp * 0.004, 1))   # cap at 0.4% = ~90 pts on 23000
+        atr_use = max(atr_use, round(ltp * 0.001, 1))   # floor at 0.1% = ~23 pts
+    elif interval == "1h":
+        atr_use = min(raw_atr, round(ltp * 0.007, 1))   # cap at 0.7% = ~160 pts
+        atr_use = max(atr_use, round(ltp * 0.002, 1))
+    else:  # 1d — use raw ATR as-is
+        atr_use = raw_atr
 
-    # Use the scaled ATR — but floor it to at least 0.3% of LTP so it's never zero
-    atr_use = max(atr_scaled, round(ltp * 0.003, 1))
-
-    # SL = 1x scaled ATR, T1 = 1.5x, T2 = 2.5x  (tight for intraday)
+    # Realistic intraday SL/Target multipliers:
+    # SL = 1x ATR (tight), T1 = 1.5x (easy first target), T2 = 2.5x (runner)
     if dirn == "CALL":
         entry_price  = round(ltp, 2)
-        sl_price     = round(ltp - atr_use * 1.0, 2)
+        sl_price     = round(ltp - atr_use, 2)
         target1      = round(ltp + atr_use * 1.5, 2)
         target2      = round(ltp + atr_use * 2.5, 2)
-        max_loss_pts = round(ltp - sl_price, 1)
+        max_loss_pts = round(atr_use, 1)
         sl_label     = "Stop Loss (below entry)"
-        t1_label     = "Target 1 (+1.5x)"
-        t2_label     = "Target 2 (+2.5x)"
+        t1_label     = "Target 1 (+1.5x ATR)"
+        t2_label     = "Target 2 (+2.5x ATR)"
         sl_col       = "#ef4444"; t_col = "#10b981"
         dirn_badge   = "<span style='background:#052e16;color:#4ade80;border:2px solid #16a34a;border-radius:8px;padding:6px 20px;font-size:22px;font-weight:900;letter-spacing:1px'>🟢 THIS IS A CALL TRADE</span>"
         dirn_note    = "You are buying a <b>CALL option</b>. Profit when market goes UP."
         prem_action  = "BUY CALL OPTION PREMIUM AT"
     elif dirn == "PUT":
         entry_price  = round(ltp, 2)
-        sl_price     = round(ltp + atr_use * 1.0, 2)
+        sl_price     = round(ltp + atr_use, 2)
         target1      = round(ltp - atr_use * 1.5, 2)
         target2      = round(ltp - atr_use * 2.5, 2)
-        max_loss_pts = round(sl_price - ltp, 1)
+        max_loss_pts = round(atr_use, 1)
         sl_label     = "Stop Loss (above entry)"
-        t1_label     = "Target 1 (-1.5x)"
-        t2_label     = "Target 2 (-2.5x)"
+        t1_label     = "Target 1 (-1.5x ATR)"
+        t2_label     = "Target 2 (-2.5x ATR)"
         sl_col       = "#ef4444"; t_col = "#10b981"
         dirn_badge   = "<span style='background:#2e0505;color:#f87171;border:2px solid #dc2626;border-radius:8px;padding:6px 20px;font-size:22px;font-weight:900;letter-spacing:1px'>🔴 THIS IS A PUT TRADE</span>"
         dirn_note    = "You are buying a <b>PUT option</b>. Profit when market goes DOWN."
@@ -1302,11 +1302,10 @@ if page == "📈 Signal Dashboard":
     else:
         entry_price = ltp; sl_price = 0; target1 = 0; target2 = 0
         max_loss_pts = 0; sl_label = "Stop Loss"; t1_label = "Target 1"; t2_label = "Target 2"
-        sl_col = "#94a3b8"; t_col = "#94a3b8"
+        sl_col = "#94a3b8"; t_col = "#94a3b8"; atr_use = raw_atr
         dirn_badge = "<span style='background:#1c1c0a;color:#fde047;border:2px solid #ca8a04;border-radius:8px;padding:6px 20px;font-size:22px;font-weight:900'>🟡 WAIT — NO TRADE YET</span>"
         dirn_note  = "No clear direction. Do not enter. Watch for next candle."
         prem_action = "OPTION PREMIUM"
-        atr_use = atr_scaled
 
     # CALL / PUT badge
     st.markdown(
@@ -1326,10 +1325,10 @@ if page == "📈 Signal Dashboard":
         "<div style='background:#0f172a;border:2px solid #334155;border-radius:10px;"
         "padding:18px 22px;margin-bottom:10px'>"
         "<div style='font-size:13px;color:#94a3b8;margin-bottom:12px'>"
-        "Levels scaled for <b style='color:#fbbf24'>{ivl} timeframe</b> — "
-        "Scaled ATR = <b style='color:#fbbf24'>{atr_s:.0f} pts</b> "
-        "(Daily ATR {atr:.0f} pts scaled down to {ivl} candle size). "
-        "Verify live premium in your broker before entering."
+        "Timeframe: <b style='color:#fbbf24'>{ivl}</b> — "
+        "ATR (this candle size) = <b style='color:#fbbf24'>{atr_s:.0f} pts</b>. "
+        "SL = 1x ATR, Target 1 = 1.5x, Target 2 = 2.5x. "
+        "Verify live premium in broker before entering."
         "</div>"
         "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px'>"
 
