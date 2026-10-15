@@ -1261,54 +1261,70 @@ if page == "📈 Signal Dashboard":
     # ATR-based levels for the underlying (Nifty/stock spot price)
     if dirn == "CALL":
         entry_price  = round(ltp, 2)
-        sl_price     = round(ltp - atr * 1.0, 2)          # 1x ATR below entry
-        target1      = round(ltp + atr * 1.5, 2)          # 1.5x ATR above entry
-        target2      = round(ltp + atr * 3.0, 2)          # 3x ATR above entry
+        sl_price     = round(ltp - atr * 1.0, 2)
+        target1      = round(ltp + atr * 1.5, 2)
+        target2      = round(ltp + atr * 3.0, 2)
         max_loss_pts = round(ltp - sl_price, 2)
         sl_label     = "Stop Loss (below entry)"
         t1_label     = "Target 1 (+1.5x ATR)"
         t2_label     = "Target 2 (+3x ATR)"
         sl_col       = "#ef4444"; t_col = "#10b981"
+        dirn_badge   = "<span style='background:#052e16;color:#4ade80;border:2px solid #16a34a;border-radius:8px;padding:6px 20px;font-size:22px;font-weight:900;letter-spacing:1px'>🟢 THIS IS A CALL TRADE</span>"
+        dirn_note    = "You are buying a <b>CALL option</b>. Profit when market goes UP."
+        prem_action  = "BUY CALL OPTION PREMIUM AT"
     elif dirn == "PUT":
         entry_price  = round(ltp, 2)
-        sl_price     = round(ltp + atr * 1.0, 2)          # 1x ATR above entry
-        target1      = round(ltp - atr * 1.5, 2)          # 1.5x ATR below
-        target2      = round(ltp - atr * 3.0, 2)          # 3x ATR below
+        sl_price     = round(ltp + atr * 1.0, 2)
+        target1      = round(ltp - atr * 1.5, 2)
+        target2      = round(ltp - atr * 3.0, 2)
         max_loss_pts = round(sl_price - ltp, 2)
         sl_label     = "Stop Loss (above entry)"
         t1_label     = "Target 1 (-1.5x ATR)"
         t2_label     = "Target 2 (-3x ATR)"
         sl_col       = "#ef4444"; t_col = "#10b981"
+        dirn_badge   = "<span style='background:#2e0505;color:#f87171;border:2px solid #dc2626;border-radius:8px;padding:6px 20px;font-size:22px;font-weight:900;letter-spacing:1px'>🔴 THIS IS A PUT TRADE</span>"
+        dirn_note    = "You are buying a <b>PUT option</b>. Profit when market goes DOWN."
+        prem_action  = "BUY PUT OPTION PREMIUM AT"
     else:
         entry_price = ltp; sl_price = 0; target1 = 0; target2 = 0
         max_loss_pts = 0; sl_label = "Stop Loss"; t1_label = "Target 1"; t2_label = "Target 2"
         sl_col = "#94a3b8"; t_col = "#94a3b8"
+        dirn_badge = "<span style='background:#1c1c0a;color:#fde047;border:2px solid #ca8a04;border-radius:8px;padding:6px 20px;font-size:22px;font-weight:900'>🟡 WAIT — NO TRADE YET</span>"
+        dirn_note  = "No clear direction. Do not enter. Watch for next candle."
+        prem_action = "OPTION PREMIUM"
 
-    # Option premium levels (ATM premium assumed ~0.5–1% of spot, refined by ATR)
-    prem_entry = round(atr * 0.8, 1)          # estimated ATM premium at entry
-    prem_sl    = round(prem_entry * 0.70, 1)  # SL on premium = 30% loss (exit here)
-    prem_t1    = round(prem_entry * 1.50, 1)  # Target 1 on premium = 50% gain
-    prem_t2    = round(prem_entry * 2.20, 1)  # Target 2 on premium = 120% gain
+    # CALL / PUT badge
+    st.markdown(
+        "<div style='text-align:center;margin-bottom:14px'>{badge}<br>"
+        "<span style='font-size:13px;color:#94a3b8;margin-top:6px;display:block'>{note}</span>"
+        "</div>".format(badge=dirn_badge, note=dirn_note),
+        unsafe_allow_html=True)
 
-    # Render the big price panel card
+    # Option premium levels (ATM premium estimated from ATR)
+    prem_entry = round(atr * 0.8, 1)
+    prem_sl    = round(prem_entry * 0.70, 1)
+    prem_t1    = round(prem_entry * 1.50, 1)
+    prem_t2    = round(prem_entry * 2.20, 1)
+
+    # Spot price levels card
     st.markdown(
         "<div style='background:#0f172a;border:2px solid #334155;border-radius:10px;"
         "padding:18px 22px;margin-bottom:10px'>"
-        "<div style='font-size:14px;color:#94a3b8;margin-bottom:12px'>"
-        "Spot (Underlying) price levels based on ATR={atr:.1f}. "
-        "Option premium levels are ATR-estimated — always check live premium in your broker before entering."
+        "<div style='font-size:13px;color:#94a3b8;margin-bottom:12px'>"
+        "Spot price levels based on ATR = {atr:.1f} pts. "
+        "Option premium levels are ATR-estimated — verify live premium in your broker app before entering."
         "</div>"
         "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px'>"
 
         "<div style='background:#1e293b;border-radius:8px;padding:12px 16px;border-left:4px solid #3b82f6'>"
         "<div style='font-size:11px;color:#64748b'>🎯 ENTRY PRICE (Spot)</div>"
         "<div style='font-size:24px;font-weight:900;color:#3b82f6'>Rs {entry:.2f}</div>"
-        "<div style='font-size:11px;color:#64748b'>Current LTP — buy at market</div></div>"
+        "<div style='font-size:11px;color:#64748b'>Current LTP — enter at market</div></div>"
 
         "<div style='background:#1e293b;border-radius:8px;padding:12px 16px;border-left:4px solid {sl_col}'>"
         "<div style='font-size:11px;color:#64748b'>🛑 {sl_label}</div>"
         "<div style='font-size:24px;font-weight:900;color:{sl_col}'>Rs {sl:.2f}</div>"
-        "<div style='font-size:11px;color:#64748b'>Max loss: {loss:.0f} pts ({atr:.0f} ATR)</div></div>"
+        "<div style='font-size:11px;color:#64748b'>Max loss: {loss:.0f} pts — EXIT immediately if hit</div></div>"
 
         "<div style='background:#1e293b;border-radius:8px;padding:12px 16px;border-left:4px solid {t_col}'>"
         "<div style='font-size:11px;color:#64748b'>✅ {t1_label}</div>"
@@ -1335,25 +1351,26 @@ if page == "📈 Signal Dashboard":
         "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px'>"
 
         "<div style='background:#1e293b;border-radius:6px;padding:10px 14px;text-align:center'>"
-        "<div style='font-size:11px;color:#64748b'>BUY PREMIUM AT</div>"
+        "<div style='font-size:11px;color:#64748b'>{pact}</div>"
         "<div style='font-size:20px;font-weight:800;color:#3b82f6'>Rs {pe:.1f}</div>"
-        "<div style='font-size:11px;color:#64748b'>Entry premium</div></div>"
+        "<div style='font-size:11px;color:#64748b'>Your entry premium cost</div></div>"
 
         "<div style='background:#2e1a1a;border-radius:6px;padding:10px 14px;text-align:center'>"
-        "<div style='font-size:11px;color:#64748b'>EXIT IF DROPS TO</div>"
+        "<div style='font-size:11px;color:#ef4444;font-weight:700'>🛑 EXIT IF PREMIUM DROPS TO</div>"
         "<div style='font-size:20px;font-weight:800;color:#ef4444'>Rs {psl:.1f}</div>"
-        "<div style='font-size:11px;color:#64748b'>SL on premium (–30%)</div></div>"
+        "<div style='font-size:11px;color:#94a3b8'>SL on premium (–30%) — get out NOW</div></div>"
 
         "<div style='background:#1a2e1a;border-radius:6px;padding:10px 14px;text-align:center'>"
-        "<div style='font-size:11px;color:#64748b'>TARGET 1 PREMIUM</div>"
+        "<div style='font-size:11px;color:#10b981;font-weight:700'>✅ TARGET 1 PREMIUM</div>"
         "<div style='font-size:20px;font-weight:800;color:#10b981'>Rs {pt1:.1f}</div>"
-        "<div style='font-size:11px;color:#64748b'>+50% on premium</div></div>"
+        "<div style='font-size:11px;color:#94a3b8'>+50% gain — sell 50% here</div></div>"
 
         "<div style='background:#1a2e1a;border-radius:6px;padding:10px 14px;text-align:center'>"
-        "<div style='font-size:11px;color:#64748b'>TARGET 2 PREMIUM</div>"
+        "<div style='font-size:11px;color:#10b981;font-weight:700'>🚀 TARGET 2 PREMIUM</div>"
         "<div style='font-size:20px;font-weight:800;color:#10b981'>Rs {pt2:.1f}</div>"
-        "<div style='font-size:11px;color:#64748b'>+120% on premium</div></div>"
-        "</div></div>".format(pe=prem_entry, psl=prem_sl, pt1=prem_t1, pt2=prem_t2),
+        "<div style='font-size:11px;color:#94a3b8'>+120% gain — exit remaining</div></div>"
+        "</div></div>".format(
+            pact=prem_action, pe=prem_entry, psl=prem_sl, pt1=prem_t1, pt2=prem_t2),
         unsafe_allow_html=True)
 
     if dirn == "WAIT":
