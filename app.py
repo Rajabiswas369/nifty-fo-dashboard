@@ -1202,6 +1202,115 @@ if page == "📈 Signal Dashboard":
     render_precision_entry_panel(df_chart, precision_signal, interval)
     st.markdown("---")
 
+    # ── Entry / Exit / Stop-Loss Price Panel ──────────────────────────────────
+    st.subheader("💰 Entry Price · Exit Targets · Stop Loss")
+    ltp   = summary["close"]
+    atr   = summary["atr"] if summary["atr"] > 0 else ltp * 0.005
+    dirn  = precision_signal.get("direction", decision["direction"])
+
+    # ATR-based levels for the underlying (Nifty/stock spot price)
+    if dirn == "CALL":
+        entry_price  = round(ltp, 2)
+        sl_price     = round(ltp - atr * 1.0, 2)          # 1x ATR below entry
+        target1      = round(ltp + atr * 1.5, 2)          # 1.5x ATR above entry
+        target2      = round(ltp + atr * 3.0, 2)          # 3x ATR above entry
+        max_loss_pts = round(ltp - sl_price, 2)
+        sl_label     = "Stop Loss (below entry)"
+        t1_label     = "Target 1 (+1.5x ATR)"
+        t2_label     = "Target 2 (+3x ATR)"
+        sl_col       = "#ef4444"; t_col = "#10b981"
+    elif dirn == "PUT":
+        entry_price  = round(ltp, 2)
+        sl_price     = round(ltp + atr * 1.0, 2)          # 1x ATR above entry
+        target1      = round(ltp - atr * 1.5, 2)          # 1.5x ATR below
+        target2      = round(ltp - atr * 3.0, 2)          # 3x ATR below
+        max_loss_pts = round(sl_price - ltp, 2)
+        sl_label     = "Stop Loss (above entry)"
+        t1_label     = "Target 1 (-1.5x ATR)"
+        t2_label     = "Target 2 (-3x ATR)"
+        sl_col       = "#ef4444"; t_col = "#10b981"
+    else:
+        entry_price = ltp; sl_price = 0; target1 = 0; target2 = 0
+        max_loss_pts = 0; sl_label = "Stop Loss"; t1_label = "Target 1"; t2_label = "Target 2"
+        sl_col = "#94a3b8"; t_col = "#94a3b8"
+
+    # Option premium levels (ATM premium assumed ~0.5–1% of spot, refined by ATR)
+    prem_entry = round(atr * 0.8, 1)          # estimated ATM premium at entry
+    prem_sl    = round(prem_entry * 0.70, 1)  # SL on premium = 30% loss (exit here)
+    prem_t1    = round(prem_entry * 1.50, 1)  # Target 1 on premium = 50% gain
+    prem_t2    = round(prem_entry * 2.20, 1)  # Target 2 on premium = 120% gain
+
+    # Render the big price panel card
+    st.markdown(
+        "<div style='background:#0f172a;border:2px solid #334155;border-radius:10px;"
+        "padding:18px 22px;margin-bottom:10px'>"
+        "<div style='font-size:14px;color:#94a3b8;margin-bottom:12px'>"
+        "Spot (Underlying) price levels based on ATR={atr:.1f}. "
+        "Option premium levels are ATR-estimated — always check live premium in your broker before entering."
+        "</div>"
+        "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px'>"
+
+        "<div style='background:#1e293b;border-radius:8px;padding:12px 16px;border-left:4px solid #3b82f6'>"
+        "<div style='font-size:11px;color:#64748b'>🎯 ENTRY PRICE (Spot)</div>"
+        "<div style='font-size:24px;font-weight:900;color:#3b82f6'>Rs {entry:.2f}</div>"
+        "<div style='font-size:11px;color:#64748b'>Current LTP — buy at market</div></div>"
+
+        "<div style='background:#1e293b;border-radius:8px;padding:12px 16px;border-left:4px solid {sl_col}'>"
+        "<div style='font-size:11px;color:#64748b'>🛑 {sl_label}</div>"
+        "<div style='font-size:24px;font-weight:900;color:{sl_col}'>Rs {sl:.2f}</div>"
+        "<div style='font-size:11px;color:#64748b'>Max loss: {loss:.0f} pts ({atr:.0f} ATR)</div></div>"
+
+        "<div style='background:#1e293b;border-radius:8px;padding:12px 16px;border-left:4px solid {t_col}'>"
+        "<div style='font-size:11px;color:#64748b'>✅ {t1_label}</div>"
+        "<div style='font-size:24px;font-weight:900;color:{t_col}'>Rs {t1:.2f}</div>"
+        "<div style='font-size:11px;color:#64748b'>Book 50–60% qty here</div></div>"
+
+        "<div style='background:#1e293b;border-radius:8px;padding:12px 16px;border-left:4px solid {t_col}'>"
+        "<div style='font-size:11px;color:#64748b'>🚀 {t2_label}</div>"
+        "<div style='font-size:24px;font-weight:900;color:{t_col}'>Rs {t2:.2f}</div>"
+        "<div style='font-size:11px;color:#64748b'>Trail SL for remaining qty</div></div>"
+        "</div></div>".format(
+            atr=atr, entry=entry_price, sl=sl_price, loss=max_loss_pts,
+            t1=target1, t2=target2,
+            sl_col=sl_col, t_col=t_col,
+            sl_label=sl_label, t1_label=t1_label, t2_label=t2_label,
+        ), unsafe_allow_html=True)
+
+    # Option premium levels row
+    st.markdown(
+        "<div style='background:#0f172a;border:1.5px solid #334155;border-radius:10px;"
+        "padding:14px 22px;margin-bottom:4px'>"
+        "<div style='font-size:13px;font-weight:700;color:#cbd5e1;margin-bottom:10px'>"
+        "📋 Option Premium Levels (ATM estimate — verify in broker)</div>"
+        "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px'>"
+
+        "<div style='background:#1e293b;border-radius:6px;padding:10px 14px;text-align:center'>"
+        "<div style='font-size:11px;color:#64748b'>BUY PREMIUM AT</div>"
+        "<div style='font-size:20px;font-weight:800;color:#3b82f6'>Rs {pe:.1f}</div>"
+        "<div style='font-size:11px;color:#64748b'>Entry premium</div></div>"
+
+        "<div style='background:#2e1a1a;border-radius:6px;padding:10px 14px;text-align:center'>"
+        "<div style='font-size:11px;color:#64748b'>EXIT IF DROPS TO</div>"
+        "<div style='font-size:20px;font-weight:800;color:#ef4444'>Rs {psl:.1f}</div>"
+        "<div style='font-size:11px;color:#64748b'>SL on premium (–30%)</div></div>"
+
+        "<div style='background:#1a2e1a;border-radius:6px;padding:10px 14px;text-align:center'>"
+        "<div style='font-size:11px;color:#64748b'>TARGET 1 PREMIUM</div>"
+        "<div style='font-size:20px;font-weight:800;color:#10b981'>Rs {pt1:.1f}</div>"
+        "<div style='font-size:11px;color:#64748b'>+50% on premium</div></div>"
+
+        "<div style='background:#1a2e1a;border-radius:6px;padding:10px 14px;text-align:center'>"
+        "<div style='font-size:11px;color:#64748b'>TARGET 2 PREMIUM</div>"
+        "<div style='font-size:20px;font-weight:800;color:#10b981'>Rs {pt2:.1f}</div>"
+        "<div style='font-size:11px;color:#64748b'>+120% on premium</div></div>"
+        "</div></div>".format(pe=prem_entry, psl=prem_sl, pt1=prem_t1, pt2=prem_t2),
+        unsafe_allow_html=True)
+
+    if dirn == "WAIT":
+        st.info("⏳ Signal is WAIT — no entry levels shown. Wait for a clear BUY CALL or BUY PUT signal.")
+
+    st.markdown("---")
+
     # Strike Advisor
     st.subheader("📌 Options Strike Advisor")
     oa1,oa2,oa3,oa4,oa5,oa6 = st.columns(6)
