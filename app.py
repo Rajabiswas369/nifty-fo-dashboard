@@ -998,9 +998,10 @@ def render_precision_entry_panel(df: pd.DataFrame, ps: dict, interval: str):
                 for p in all_pats:
                     sig_col = "#10b981" if p["signal"] == "CALL" else "#ef4444"
                     st.markdown(
-                        "<span style='color:{c};font-weight:700'>[{}]</span> <b>{}</b> — {}"
-                        " <span style='font-size:11px;color:#64748b'>({})</span>".format(
-                            sig_col, p["signal"], p["name"], p["desc"], p["strength"]),
+                        "<span style='color:{col};font-weight:700'>[{sig}]</span> <b>{name}</b> — {desc}"
+                        " <span style='font-size:11px;color:#64748b'>({strength})</span>".format(
+                            col=sig_col, sig=p["signal"], name=p["name"],
+                            desc=p["desc"], strength=p["strength"]),
                         unsafe_allow_html=True,
                     )
 
@@ -1064,7 +1065,6 @@ def render_precision_entry_panel(df: pd.DataFrame, ps: dict, interval: str):
                 arrowcolor=arrow_color, ax=0, ay=arrow_ay,
                 font=dict(color=arrow_color, size=12),
                 bgcolor="#0f172a", bordercolor=arrow_color, borderwidth=1,
-                row=1, col=1,
             )
 
         vol_colors_mini = ["#26a69a" if df_mini["Close"].iloc[i] >= df_mini["Open"].iloc[i] else "#ef5350"
