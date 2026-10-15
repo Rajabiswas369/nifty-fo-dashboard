@@ -1173,6 +1173,56 @@ if page == "📈 Signal Dashboard":
     c6.metric("EMA Cross",  summary["ema_cross"])
     st.markdown("---")
 
+    # ── BIG ACTION BANNER ─────────────────────────────────────────────────────
+    _ps_quick  = compute_precision_signal(df_chart, summary, decision, vdict)
+    _qdirn     = _ps_quick.get("direction", "WAIT")
+    _qconf     = int(_ps_quick.get("signal_score", 0) / max(_ps_quick.get("max_score", 1), 1) * 100)
+    _atr_q     = summary["atr"] if summary["atr"] > 0 else summary["close"] * 0.005
+
+    if _qdirn == "CALL":
+        _bg, _bd, _fc = "#052e16", "#16a34a", "#4ade80"
+        _action_text  = "BUY CALL"
+        _action_sub   = "Market moving UP — Buy a CALL option now"
+        _sl_q  = round(summary["close"] - _atr_q, 2)
+        _t1_q  = round(summary["close"] + _atr_q * 1.5, 2)
+        _sl_txt = "SL below Rs {:.0f}".format(_sl_q)
+        _t1_txt = "Target Rs {:.0f}".format(_t1_q)
+    elif _qdirn == "PUT":
+        _bg, _bd, _fc = "#2e0505", "#dc2626", "#f87171"
+        _action_text  = "BUY PUT"
+        _action_sub   = "Market moving DOWN — Buy a PUT option now"
+        _sl_q  = round(summary["close"] + _atr_q, 2)
+        _t1_q  = round(summary["close"] - _atr_q * 1.5, 2)
+        _sl_txt = "SL above Rs {:.0f}".format(_sl_q)
+        _t1_txt = "Target Rs {:.0f}".format(_t1_q)
+    else:
+        _bg, _bd, _fc = "#1c1c0a", "#ca8a04", "#fde047"
+        _action_text  = "WAIT — DO NOT ENTER"
+        _action_sub   = "No clear signal yet. Watch and wait for next candle."
+        _sl_txt = "—"; _t1_txt = "—"
+
+    st.markdown(
+        "<div style='background:{bg};border:3px solid {bd};border-radius:14px;"
+        "padding:22px 28px;margin-bottom:18px;text-align:center'>"
+        "<div style='font-size:42px;font-weight:900;color:{fc};letter-spacing:2px'>{act}</div>"
+        "<div style='font-size:16px;color:{fc};opacity:0.85;margin-top:4px'>{sub}</div>"
+        "<div style='display:flex;justify-content:center;gap:32px;margin-top:16px;flex-wrap:wrap'>"
+        "<div><span style='font-size:12px;color:#94a3b8'>🛑 STOP LOSS</span><br>"
+        "<span style='font-size:20px;font-weight:800;color:#f87171'>{sl}</span></div>"
+        "<div><span style='font-size:12px;color:#94a3b8'>✅ TARGET 1</span><br>"
+        "<span style='font-size:20px;font-weight:800;color:#4ade80'>{t1}</span></div>"
+        "<div><span style='font-size:12px;color:#94a3b8'>⚡ SIGNAL SCORE</span><br>"
+        "<span style='font-size:20px;font-weight:800;color:{fc}'>{sc}%</span></div>"
+        "<div><span style='font-size:12px;color:#94a3b8'>⏰ ENTER AT</span><br>"
+        "<span style='font-size:20px;font-weight:800;color:{fc}'>{etime}</span></div>"
+        "</div></div>".format(
+            bg=_bg, bd=_bd, fc=_fc,
+            act=_action_text, sub=_action_sub,
+            sl=_sl_txt, t1=_t1_txt, sc=_qconf,
+            etime=_ps_quick["entry_time"],
+        ), unsafe_allow_html=True)
+    st.markdown("---")
+
     # Trade Decision Panel
     st.subheader("🎯 Trade Decision Panel")
     for w in decision["warnings"]:
@@ -1198,7 +1248,7 @@ if page == "📈 Signal Dashboard":
     # ── Precision Entry Signal Panel ──────────────────────────────────────────
     st.subheader("⚡ Precision Entry Signal — BUY NOW with Exit Times")
     st.caption("Reads the current candle + live indicators. Enter at exact time, exit within 5 / 10 / 15 min.")
-    precision_signal = compute_precision_signal(df_chart, summary, decision, vdict)
+    precision_signal = _ps_quick  # already computed above
     render_precision_entry_panel(df_chart, precision_signal, interval)
     st.markdown("---")
 
