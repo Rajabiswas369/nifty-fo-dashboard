@@ -2273,7 +2273,10 @@ elif page == "🤖 AI Trading Coach":
 
     # ── API key setup ────────────────────────────────────────────────────────
     try:
-        gemini_key = st.secrets.get("gemini_api_key", "")
+        if "gemini_api_key" in st.secrets:
+            gemini_key = st.secrets["gemini_api_key"]
+        else:
+            gemini_key = ""
     except Exception:
         gemini_key = ""
 
