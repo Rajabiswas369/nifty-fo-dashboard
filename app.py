@@ -133,6 +133,7 @@ page = st.sidebar.radio(
     "📂 Navigate",
     [
         "📈 Signal Dashboard",
+        "🤝 AI Trading Partner",
         "🎯 Goal & Compounding Engine",
         "🕹️ Angel One Live Cockpit",
         "📰 Market News & Verdict",
@@ -3159,6 +3160,571 @@ elif page == "🤖 AI Trading Coach":
 
     st.markdown("---")
     st.caption("⚠️ AI Trading Coach is for **educational purposes only**. Not financial advice. F&O trading involves significant risk.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ██  PAGE: 🤝 AI TRADING PARTNER
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "🤝 AI Trading Partner":
+
+    st.title("🤝 AI Trading Partner")
+    st.caption(
+        "Not a coach. A co-trader. Reads live candles right now. "
+        "Remembers every pattern we traded together. Grows with you every day."
+    )
+
+    # ── Gemini key check ──────────────────────────────────────────────────────
+    try:
+        _pk = st.secrets.get("gemini_api_key", "")
+    except Exception:
+        _pk = ""
+    if not _pk:
+        st.warning(
+            "**Gemini API key needed.**\n\n"
+            "Go to Streamlit Cloud → your app → **Settings → Secrets** and add:\n"
+            "```\ngemini_api_key = \"YOUR_FREE_KEY\"\n```\n"
+            "Get a free key at [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)"
+        )
+        _pk_tmp = st.text_input("🔑 Paste key here to try now (not saved)", type="password", key="partner_key_tmp")
+        if _pk_tmp:
+            _pk = _pk_tmp
+        else:
+            st.stop()
+
+    # ── Load live chart data (same symbol/interval from sidebar) ─────────────
+    try:
+        _pt_df = load_chart_data(symbol, interval, period)
+        _pt_s  = get_summary(_pt_df)
+        _pt_d  = compute_decision(_pt_s)
+        _pt_v  = build_day_verdict(manual_event)
+        _pt_ps = compute_precision_signal(_pt_df, _pt_s, _pt_d, _pt_v)
+        _has_live = True
+    except Exception as _e:
+        st.error("Could not load live data: {}".format(_e))
+        _has_live = False
+
+    # ── Load all past trades ──────────────────────────────────────────────────
+    _pt_trades = load_trades()
+    _pt_closed = _pt_trades[_pt_trades["Result"].isin(["WIN","LOSS"])].copy() \
+        if not _pt_trades.empty else pd.DataFrame()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION A: LIVE SIGNAL — what to do RIGHT NOW
+    # ─────────────────────────────────────────────────────────────────────────
+    if _has_live:
+        _ltp   = _pt_s["close"]
+        _atr   = _pt_s["atr"] if _pt_s["atr"] > 0 else _ltp * 0.005
+        _dirn  = _pt_ps.get("direction", _pt_d["direction"])
+        _tw    = _pt_v["tw"]
+        _now_t = datetime.now(IST).strftime("%H:%M")
+
+        # Colour coding
+        if _dirn == "CALL":
+            _sbg, _sbd, _sfc = "#052e16", "#16a34a", "#4ade80"
+            _entry_px = round(_ltp + _atr * 0.1, 0)      # slight premium above LTP
+            _target1  = round(_ltp + _atr * 1.5, 0)
+            _target2  = round(_ltp + _atr * 3.0, 0)
+            _sl_px    = round(_ltp - _atr * 0.75, 0)
+            _atm      = round(_ltp / 50) * 50
+            _trade_str = "BUY {atm} CE (CALL)".format(atm=int(_atm))
+            _reason_short = "Bullish setup — {bull} bull signals vs {bear} bear".format(
+                bull=_pt_d["bull_score"], bear=_pt_d["bear_score"])
+        elif _dirn == "PUT":
+            _sbg, _sbd, _sfc = "#2e0505", "#dc2626", "#f87171"
+            _entry_px = round(_ltp - _atr * 0.1, 0)
+            _target1  = round(_ltp - _atr * 1.5, 0)
+            _target2  = round(_ltp - _atr * 3.0, 0)
+            _sl_px    = round(_ltp + _atr * 0.75, 0)
+            _atm      = round(_ltp / 50) * 50
+            _trade_str = "BUY {atm} PE (PUT)".format(atm=int(_atm))
+            _reason_short = "Bearish setup — {bear} bear signals vs {bull} bull".format(
+                bear=_pt_d["bear_score"], bull=_pt_d["bull_score"])
+        else:
+            _sbg, _sbd, _sfc = "#1c1c0a", "#ca8a04", "#fde047"
+            _entry_px = _target1 = _target2 = _sl_px = 0
+            _atm      = round(_ltp / 50) * 50
+            _trade_str = "WAIT — DO NOT ENTER"
+            _reason_short = "Mixed signals. No clear edge right now."
+
+        # ── Big live call box ─────────────────────────────────────────────────
+        if _dirn in ("CALL", "PUT"):
+            st.markdown(
+                "<div style='background:{bg};border:3px solid {bd};border-radius:14px;"
+                "padding:20px 26px;margin-bottom:16px'>"
+                "<div style='font-size:13px;color:{fc};opacity:0.7;margin-bottom:4px'>"
+                "⏰ NOW — {tw} &nbsp;|&nbsp; {sym} {ivl}</div>"
+                "<div style='font-size:36px;font-weight:900;color:{fc};letter-spacing:1px'>"
+                "{trade}</div>"
+                "<div style='display:flex;gap:28px;margin-top:14px;flex-wrap:wrap'>"
+                "<div><div style='font-size:11px;color:{fc};opacity:0.65'>📍 ENTER WHEN NIFTY</div>"
+                "<div style='font-size:22px;font-weight:800;color:{fc}'>"
+                "{dirword} Rs {ep:,.0f}</div></div>"
+                "<div><div style='font-size:11px;color:{fc};opacity:0.65'>✅ TARGET 1 (book 50%)</div>"
+                "<div style='font-size:22px;font-weight:800;color:#4ade80'>Rs {t1:,.0f}</div></div>"
+                "<div><div style='font-size:11px;color:{fc};opacity:0.65'>🏁 TARGET 2 (exit all)</div>"
+                "<div style='font-size:22px;font-weight:800;color:#86efac'>Rs {t2:,.0f}</div></div>"
+                "<div><div style='font-size:11px;color:{fc};opacity:0.65'>🛑 STOP LOSS — EXIT ALL</div>"
+                "<div style='font-size:22px;font-weight:800;color:#fca5a5'>Rs {sl:,.0f}</div></div>"
+                "</div>"
+                "<div style='font-size:12px;color:{fc};opacity:0.7;margin-top:10px'>"
+                "Why: {why}</div>"
+                "</div>".format(
+                    bg=_sbg, bd=_sbd, fc=_sfc,
+                    tw=_tw["label"], sym=symbol, ivl=interval,
+                    trade=_trade_str,
+                    dirword="crosses above" if _dirn=="CALL" else "drops below",
+                    ep=_entry_px, t1=_target1, t2=_target2, sl=_sl_px,
+                    why=_reason_short,
+                ),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                "<div style='background:{bg};border:2px solid {bd};border-radius:14px;"
+                "padding:18px 24px;margin-bottom:16px;text-align:center'>"
+                "<div style='font-size:28px;font-weight:900;color:{fc}'>{trade}</div>"
+                "<div style='font-size:13px;color:{fc};opacity:0.75;margin-top:6px'>{why}</div>"
+                "</div>".format(bg=_sbg, bd=_sbd, fc=_sfc, trade=_trade_str, why=_reason_short),
+                unsafe_allow_html=True,
+            )
+
+        # ── What the current candle is saying ────────────────────────────────
+        _patterns_now = detect_candle_patterns(_pt_df)
+        _top_pat = next((p for p in _patterns_now if p["signal"] != "WAIT"), None)
+
+        st.markdown("---")
+        _pc1, _pc2, _pc3, _pc4, _pc5 = st.columns(5)
+        _pc1.metric("LTP",        "Rs {:,.0f}".format(_ltp))
+        _pc2.metric("RSI",        "{:.1f}".format(_pt_s["rsi"]),
+                    "OB⚠️" if _pt_s["rsi"]>65 else ("OS⚠️" if _pt_s["rsi"]<35 else "OK"))
+        _pc3.metric("Supertrend", _pt_s["supertrend"])
+        _pc4.metric("ADX",        "{:.1f}".format(_pt_s["adx"]),
+                    "Strong" if _pt_s["adx"]>25 else "Weak/Choppy")
+        _pc5.metric("Candle",     _top_pat["name"] if _top_pat else "No pattern",
+                    _top_pat["signal"] if _top_pat else "—")
+
+        # ── Pattern history lookup — "last time we saw this" ─────────────────
+        if _top_pat and not _pt_closed.empty:
+            _same_pat_trades = _pt_closed[
+                _pt_closed["Notes"].str.contains(_top_pat["name"], case=False, na=False) |
+                _pt_closed["Lessons Learned"].str.contains(_top_pat["name"], case=False, na=False)
+            ]
+            if not _same_pat_trades.empty:
+                _sp_pnl = pd.to_numeric(_same_pat_trades["Net P&L"], errors="coerce").sum()
+                _sp_wr  = round((_same_pat_trades["Result"]=="WIN").sum() / len(_same_pat_trades) * 100, 0)
+                st.info(
+                    "🧠 **Pattern memory:** Last time we saw **{}** in your trades, "
+                    "you had **{:.0f}% win rate** over {} trade(s), total P&L Rs {:,.0f}. "
+                    "Factor this into your decision.".format(
+                        _top_pat["name"], _sp_wr, len(_same_pat_trades), _sp_pnl)
+                )
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION B: PSYCHOLOGY CHECK-IN before trading
+    # ─────────────────────────────────────────────────────────────────────────
+    st.subheader("🧘 How are you feeling RIGHT NOW? (takes 10 seconds)")
+    st.caption(
+        "Your partner reads this before every suggestion. "
+        "Your mental state is as important as RSI. Be honest."
+    )
+
+    _pcol1, _pcol2 = st.columns([2, 1])
+    with _pcol1:
+        _mood = st.select_slider(
+            "Mental state right now",
+            options=["😰 Anxious", "😟 Worried", "😐 Neutral", "😊 Calm", "💪 Confident", "🔥 Overexcited"],
+            value="😊 Calm",
+            key="partner_mood",
+        )
+        _psych_note = st.text_input(
+            "Any thoughts affecting your trading today? (optional but powerful)",
+            placeholder="e.g. Lost ₹2000 yesterday and want to recover... / Feeling patient today / Market looks scary",
+            key="partner_psych_note",
+        )
+    with _pcol2:
+        _mood_risk = {
+            "😰 Anxious":     ("HIGH RISK", "#dc2626", "Anxiety = paralysis or panic exits. Trade ½ lot or skip today."),
+            "😟 Worried":     ("ELEVATED",  "#d97706", "Worry means you'll exit too early or too late. Be strict with SL."),
+            "😐 Neutral":     ("MODERATE",  "#94a3b8", "Neutral is fine. Follow the system mechanically."),
+            "😊 Calm":        ("LOW RISK",  "#16a34a", "Calm = best state for trading. Full lot size OK."),
+            "💪 Confident":   ("LOW RISK",  "#2563eb", "Confidence is good. Don't let it become overconfidence."),
+            "🔥 Overexcited": ("HIGH RISK", "#dc2626", "Excitement = impulsive entries. Wait for confirmation. ½ lot max."),
+        }
+        _mr, _mc, _mt = _mood_risk.get(_mood, ("MODERATE", "#94a3b8", ""))
+        st.markdown(
+            "<div style='background:#0f172a;border:2px solid {c};border-radius:10px;"
+            "padding:14px;text-align:center;margin-top:8px'>"
+            "<div style='font-size:11px;color:#94a3b8'>Psychology Risk</div>"
+            "<div style='font-size:20px;font-weight:900;color:{c}'>{r}</div>"
+            "<div style='font-size:12px;color:#cbd5e1;margin-top:6px;line-height:1.5'>{t}</div>"
+            "</div>".format(c=_mc, r=_mr, t=_mt),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION C: PATTERN MEMORY — what we learned from past trades
+    # ─────────────────────────────────────────────────────────────────────────
+    st.subheader("🧠 What We Learned Together (Pattern Memory)")
+    st.caption("Every trade teaches us something. This is what your partner has learned from your history.")
+
+    if _pt_closed.empty:
+        st.info("📭 No closed trades yet. Make your first trade and log it — your partner starts learning immediately.")
+    else:
+        _pm_rsi  = pd.to_numeric(_pt_closed["Entry RSI"],  errors="coerce")
+        _pm_adx  = pd.to_numeric(_pt_closed["Entry ADX"],  errors="coerce")
+        _pm_pnl  = pd.to_numeric(_pt_closed["Net P&L"],    errors="coerce").fillna(0)
+        _pt_total = len(_pt_closed)
+        _pt_wins  = (_pt_closed["Result"]=="WIN").sum()
+
+        # Best and worst candle patterns from notes
+        _pat_memory = {}
+        for _, _tr in _pt_closed.iterrows():
+            _notes_combined = (str(_tr.get("Notes","")) + " " + str(_tr.get("Lessons Learned",""))).lower()
+            for _pname in ["bullish engulfing","bearish engulfing","hammer","shooting star",
+                           "doji","morning star","evening star","pin bar","inside bar",
+                           "marubozu","harami","spinning top"]:
+                if _pname in _notes_combined:
+                    if _pname not in _pat_memory:
+                        _pat_memory[_pname] = {"wins":0, "losses":0, "pnl":0}
+                    if _tr.get("Result") == "WIN":
+                        _pat_memory[_pname]["wins"]   += 1
+                    else:
+                        _pat_memory[_pname]["losses"] += 1
+                    _pat_memory[_pname]["pnl"] += float(pd.to_numeric(_tr.get("Net P&L",0), errors="coerce") or 0)
+
+        # RSI zone performance
+        _rsi_zones = {
+            "35–50 (bearish)":  _pt_closed[_pm_rsi.between(35,50)],
+            "50–65 (bullish)":  _pt_closed[_pm_rsi.between(50,65)],
+            ">65 (overbought)": _pt_closed[_pm_rsi.gt(65)],
+            "<35 (oversold)":   _pt_closed[_pm_rsi.lt(35)],
+        }
+
+        _mem_col1, _mem_col2 = st.columns(2)
+
+        with _mem_col1:
+            st.markdown("**📊 Your performance by RSI zone at entry:**")
+            for _zname, _zdf in _rsi_zones.items():
+                if _zdf.empty:
+                    continue
+                _zw   = (_zdf["Result"]=="WIN").sum()
+                _zpnl = pd.to_numeric(_zdf["Net P&L"], errors="coerce").sum()
+                _zwr  = round(_zw / len(_zdf) * 100, 0)
+                _zbg  = "#052e16" if _zwr >= 60 else ("#422006" if _zwr >= 40 else "#450a0a")
+                _zbd  = "#16a34a" if _zwr >= 60 else ("#d97706" if _zwr >= 40 else "#dc2626")
+                st.markdown(
+                    "<div style='background:{bg};border:1px solid {bd};border-radius:7px;"
+                    "padding:8px 12px;margin-bottom:6px;display:flex;justify-content:space-between;"
+                    "align-items:center'>"
+                    "<span style='font-size:13px;color:#e2e8f0'>RSI {z}</span>"
+                    "<span style='font-size:13px;font-weight:700;color:{bd}'>"
+                    "{wr:.0f}% WR · {n} trades · Rs {pnl:,.0f}</span>"
+                    "</div>".format(bg=_zbg, bd=_zbd, z=_zname, wr=_zwr,
+                                    n=len(_zdf), pnl=_zpnl),
+                    unsafe_allow_html=True,
+                )
+
+        with _mem_col2:
+            st.markdown("**🕯️ Candle patterns found in your notes:**")
+            if _pat_memory:
+                for _pn, _pv in sorted(_pat_memory.items(),
+                                        key=lambda x: x[1]["pnl"], reverse=True):
+                    _pw  = _pv["wins"]; _pl = _pv["losses"]
+                    _pwr = round(_pw/(_pw+_pl)*100, 0) if (_pw+_pl) > 0 else 0
+                    _ppnl = _pv["pnl"]
+                    _pbg = "#052e16" if _pwr>=60 else ("#422006" if _pwr>=40 else "#450a0a")
+                    _pbd = "#16a34a" if _pwr>=60 else ("#d97706" if _pwr>=40 else "#dc2626")
+                    st.markdown(
+                        "<div style='background:{bg};border:1px solid {bd};border-radius:7px;"
+                        "padding:8px 12px;margin-bottom:6px;display:flex;justify-content:space-between;"
+                        "align-items:center'>"
+                        "<span style='font-size:13px;color:#e2e8f0'>{pn}</span>"
+                        "<span style='font-size:13px;font-weight:700;color:{bd}'>"
+                        "{wr:.0f}% WR · Rs {ppnl:,.0f}</span>"
+                        "</div>".format(bg=_pbg, bd=_pbd, pn=_pn.title(),
+                                        wr=_pwr, ppnl=_ppnl),
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info(
+                    "No candle patterns found in your trade notes yet. "
+                    "When you log a trade, mention the candle pattern in Notes "
+                    "(e.g. 'bearish engulfing' or 'hammer') and your partner will track it."
+                )
+
+        # ── Yesterday's summary / tomorrow's brief ────────────────────────────
+        _today_str = datetime.now(IST).strftime("%Y-%m-%d")
+        _yest_str  = (datetime.now(IST) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        _today_trades = _pt_closed[_pt_closed["Date"].astype(str).str[:10] == _today_str]
+        _yest_trades  = _pt_closed[_pt_closed["Date"].astype(str).str[:10] == _yest_str]
+
+        if not _today_trades.empty:
+            _td_pnl = pd.to_numeric(_today_trades["Net P&L"], errors="coerce").sum()
+            _td_wr  = round((_today_trades["Result"]=="WIN").sum() / len(_today_trades) * 100, 0)
+            st.markdown("---")
+            _td_col = "#4ade80" if _td_pnl >= 0 else "#f87171"
+            st.markdown(
+                "<div style='background:#0f172a;border:2px solid {c};border-radius:10px;"
+                "padding:14px 18px;margin-bottom:10px'>"
+                "<b style='color:{c}'>📅 TODAY'S SESSION SO FAR</b><br>"
+                "<span style='font-size:13px;color:#e2e8f0'>"
+                "{n} trade(s) · {wr:.0f}% win rate · Net P&L: "
+                "<b style='color:{c}'>Rs {pnl:,.0f}</b></span>"
+                "</div>".format(c=_td_col, n=len(_today_trades), wr=_td_wr, pnl=_td_pnl),
+                unsafe_allow_html=True,
+            )
+
+        if not _yest_trades.empty:
+            _yd_pnl  = pd.to_numeric(_yest_trades["Net P&L"], errors="coerce").sum()
+            _yd_wr   = round((_yest_trades["Result"]=="WIN").sum() / len(_yest_trades) * 100, 0)
+            _yd_pats = []
+            for _, _yr in _yest_trades.iterrows():
+                _ynt = (str(_yr.get("Notes","")) + " " + str(_yr.get("Lessons Learned",""))).strip()
+                if _ynt and _ynt != "nan nan": _yd_pats.append(_ynt[:80])
+            _yd_pat_str = " | ".join(_yd_pats[:3]) if _yd_pats else "No notes logged for yesterday"
+            _yd_col = "#4ade80" if _yd_pnl >= 0 else "#f87171"
+            st.markdown(
+                "<div style='background:#0f172a;border:1px solid #334155;border-radius:10px;"
+                "padding:14px 18px;margin-bottom:10px'>"
+                "<b style='color:#94a3b8'>📖 YESTERDAY'S DEBRIEF</b><br>"
+                "<span style='font-size:13px;color:#e2e8f0'>"
+                "{n} trade(s) · {wr:.0f}% WR · P&L: "
+                "<b style='color:{c}'>Rs {pnl:,.0f}</b></span><br>"
+                "<span style='font-size:12px;color:#64748b;margin-top:4px;display:block'>"
+                "What happened: {pats}</span>"
+                "</div>".format(c=_yd_col, n=len(_yest_trades),
+                                wr=_yd_wr, pnl=_yd_pnl, pats=_yd_pat_str),
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("---")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION D: PARTNER CHAT — Gemini with full live + memory context
+    # ─────────────────────────────────────────────────────────────────────────
+    st.subheader("💬 Talk to Your Trading Partner")
+    st.caption(
+        "Your partner knows: today's live signal · your candle right now · "
+        "your last 20 trades · your psychology · every pattern we've traded together."
+    )
+
+    # Build the live candle description for the prompt
+    _live_candle_ctx = "Live data unavailable."
+    if _has_live:
+        _last_candle = _pt_df.iloc[-1]
+        _prev_candle = _pt_df.iloc[-2] if len(_pt_df) >= 2 else _pt_df.iloc[-1]
+        _body_pct = abs(float(_last_candle["Close"]) - float(_last_candle["Open"])) / float(_last_candle["Open"]) * 100
+        _c_dir = "GREEN (bullish)" if float(_last_candle["Close"]) >= float(_last_candle["Open"]) else "RED (bearish)"
+        _live_candle_ctx = (
+            "Symbol: {sym} | Interval: {ivl} | LTP: Rs {ltp:,.2f}\n"
+            "Current candle: {cdir} | Body: {bp:.2f}% | RSI: {rsi:.1f} | ADX: {adx:.1f}\n"
+            "Supertrend: {st} | EMA Cross: {ec} | VWAP: Rs {vwap:,.2f} | "
+            "Price vs VWAP: {pvwap}\n"
+            "MACD: {macd:.2f} vs Signal: {msig:.2f} (histogram: {mhist:.2f})\n"
+            "ATR: {atr:.2f} | CMF: {cmf:.3f}\n"
+            "Candle pattern: {pat}\n"
+            "Signal engine says: {dirn} (bull votes: {bv}, bear votes: {brv})\n"
+            "Entry time suggestion: {et} | Time window: {tw}\n"
+            "Day verdict: {verdict}"
+        ).format(
+            sym=symbol, ivl=interval, ltp=_ltp,
+            cdir=_c_dir, bp=_body_pct,
+            rsi=_pt_s["rsi"], adx=_pt_s["adx"],
+            st=_pt_s["supertrend"], ec=_pt_s["ema_cross"],
+            vwap=_pt_s["vwap"],
+            pvwap="ABOVE (bullish)" if _ltp > _pt_s["vwap"] else "BELOW (bearish)",
+            macd=_pt_s["macd"], msig=_pt_s["macd_signal"],
+            mhist=round(_pt_s["macd"]-_pt_s["macd_signal"], 3),
+            atr=_atr, cmf=_pt_s["cmf"],
+            pat=_top_pat["name"] + " (" + _top_pat["signal"] + ")" if _top_pat else "No clear pattern",
+            dirn=_dirn, bv=_pt_ps.get("bull_votes",0), brv=_pt_ps.get("bear_votes",0),
+            et=_pt_ps.get("entry_time","—"), tw=_pt_v["tw"]["label"],
+            verdict=_pt_v["verdict"],
+        )
+
+    # Build pattern memory context for prompt
+    _pat_mem_ctx = "No pattern memory yet (no trades logged)."
+    if not _pt_closed.empty:
+        _pm_lines = []
+        # RSI zone win rates
+        for _zn, _zdf2 in _rsi_zones.items() if '_rsi_zones' in dir() else []:
+            if not _zdf2.empty:
+                _zw2  = (_zdf2["Result"]=="WIN").sum()
+                _zwr2 = round(_zw2/len(_zdf2)*100, 0)
+                _zpnl2= pd.to_numeric(_zdf2["Net P&L"], errors="coerce").sum()
+                _pm_lines.append("RSI {z}: {wr:.0f}% WR, {n} trades, Rs {pnl:,.0f}".format(
+                    z=_zn, wr=_zwr2, n=len(_zdf2), pnl=_zpnl2))
+        # Candle pattern memory
+        if '_pat_memory' in dir() and _pat_memory:
+            for _pn2, _pv2 in _pat_memory.items():
+                _pw2 = _pv2["wins"]; _pl2 = _pv2["losses"]
+                _pwr2= round(_pw2/(_pw2+_pl2)*100,0) if (_pw2+_pl2)>0 else 0
+                _pm_lines.append("{}: {:.0f}% WR, Rs {:.0f} total P&L".format(
+                    _pn2.title(), _pwr2, _pv2["pnl"]))
+        _pat_mem_ctx = "\n".join(_pm_lines) if _pm_lines else "Pattern data building up — keep logging trades."
+
+    # Build psychology context
+    _psych_ctx = "Psychology: {} | Note: {}".format(
+        st.session_state.get("partner_mood","Not provided"),
+        st.session_state.get("partner_psych_note","Nothing noted"),
+    )
+
+    # Build last 15 trades for context
+    _pt_trade_rows = "No closed trades yet."
+    if not _pt_closed.empty:
+        _pt_last15 = _pt_closed.tail(15)
+        _pt_rows_list = []
+        for _, _r in _pt_last15.iterrows():
+            _pt_rows_list.append(
+                "#{tn} {dt} | {ot} strike {st} | entry {ep} | exit {ex} | "
+                "RSI {rsi} | ADX {adx} | ST {spd} | {res} | Rs {pnl} | "
+                "candle/notes: {nt}".format(
+                    tn=_r.get("Trade #","?"), dt=str(_r.get("Date",""))[:10],
+                    ot=_r.get("Option Type","?"), st=_r.get("Strike","?"),
+                    ep=_r.get("Entry Price","?"), ex=_r.get("Exit Price","?"),
+                    rsi=_r.get("Entry RSI","?"), adx=_r.get("Entry ADX","?"),
+                    spd=_r.get("Supertrend","?"), res=_r.get("Result","?"),
+                    pnl=_r.get("Net P&L","?"),
+                    nt=(str(_r.get("Notes",""))+" "+str(_r.get("Lessons Learned",""))).strip()[:60] or "none",
+                )
+            )
+        _pt_trade_rows = "\n".join(_pt_rows_list)
+
+    _partner_prompt = (
+        "You are Raja's personal Nifty F&O trading PARTNER — not a coach, not an advisor. "
+        "You have been trading Nifty options together every day. "
+        "You know every trade he made, every mistake, every win, his psychology right now, "
+        "and you are looking at the same live charts he is.\n\n"
+
+        "HOW YOU RESPOND:\n"
+        "- Talk like a trading partner: 'We', 'Let's', 'I think', 'Last time we saw this...'\n"
+        "- Give specific actions: 'Enter 24350 PE now', 'Exit at 24200', 'SL at 24420'\n"
+        "- Reference past trade data: 'Last time Supertrend flipped BEARISH + RSI was 63, we made Rs 1800'\n"
+        "- Address his psychology: if he is anxious/overexcited, tell him to reduce size or skip\n"
+        "- Learn out loud: 'Based on our data, bearish engulfing on BEARISH Supertrend has 70% WR for us'\n"
+        "- Never be generic. Every sentence must be specific to his data or the live chart\n"
+        "- If he asks 'should I trade now' — give a YES/NO with exact entry/exit levels or exact reason to wait\n\n"
+
+        "=== LIVE CHART RIGHT NOW ===\n{live}\n\n"
+        "=== HIS PSYCHOLOGY RIGHT NOW ===\n{psych}\n\n"
+        "=== WHAT WE LEARNED FROM OUR TRADE HISTORY ===\n{mem}\n\n"
+        "=== OUR LAST 15 TRADES ===\n{trades}\n\n"
+        "=== OVERALL STATS ===\n"
+        "Total trades: {total} | Win rate: {wr}% | Net P&L: Rs {pnl:,.0f} | "
+        "Avg win: Rs {aw:,.0f} | Avg loss: Rs {al:,.0f} | R:R ratio: {rr}\n\n"
+        "Always end your response with one of:\n"
+        "✅ ACTION: [exact trade call] or ⏳ WAIT: [exact condition to watch for]"
+    ).format(
+        live=_live_candle_ctx,
+        psych=_psych_ctx,
+        mem=_pat_mem_ctx,
+        trades=_pt_trade_rows,
+        total=stats["total_trades"],
+        wr=stats["win_rate"],
+        pnl=stats["total_pnl"],
+        aw=stats["avg_win"],
+        al=stats["avg_loss"],
+        rr=stats["reward_risk"],
+    )
+
+    # ── Quick action buttons ──────────────────────────────────────────────────
+    st.markdown("**⚡ Quick — ask your partner:**")
+    _qa_cols = st.columns(3)
+    _quick_qs = [
+        "Should we trade right now?",
+        "What does this candle mean for us?",
+        "What did we learn from yesterday?",
+        "I'm feeling nervous — should I still trade?",
+        "What's our best setup based on our history?",
+        "Give me exact entry, target, SL for now",
+    ]
+    for _qi, _qq in enumerate(_quick_qs):
+        if _qa_cols[_qi % 3].button(_qq, key="pq_{}".format(_qi), use_container_width=True):
+            st.session_state.setdefault("partner_messages", [])
+            st.session_state["partner_messages"].append({"role": "user", "content": _qq})
+            st.rerun()
+
+    st.markdown("---")
+
+    # ── Partner chat history ──────────────────────────────────────────────────
+    if "partner_messages" not in st.session_state:
+        st.session_state["partner_messages"] = []
+
+    for _pm in st.session_state["partner_messages"]:
+        with st.chat_message(_pm["role"],
+                             avatar="🧑" if _pm["role"]=="user" else "🤝"):
+            st.markdown(_pm["content"])
+
+    # ── Chat input ────────────────────────────────────────────────────────────
+    _partner_input = st.chat_input("Talk to your trading partner…")
+
+    if _partner_input:
+        st.session_state["partner_messages"].append({"role": "user", "content": _partner_input})
+        with st.chat_message("user", avatar="🧑"):
+            st.markdown(_partner_input)
+
+        with st.chat_message("assistant", avatar="🤝"):
+            with st.spinner("Partner is reading the charts…"):
+                try:
+                    import google.generativeai as genai
+                    genai.configure(api_key=_pk)
+
+                    _sup_models = []
+                    try:
+                        for _mm in genai.list_models():
+                            if "generateContent" in getattr(_mm, "supported_generation_methods", []):
+                                _sup_models.append(_mm.name)
+                    except Exception:
+                        pass
+                    _cands = _sup_models or [
+                        "gemini-2.5-flash", "gemini-1.5-flash",
+                        "gemini-1.5-pro",   "gemini-pro",
+                    ]
+                    _cands.sort(key=lambda n: (0 if "flash" in n.lower() else 1))
+
+                    _hist_api = []
+                    for _hm in st.session_state["partner_messages"][:-1][-8:]:
+                        _hist_api.append({
+                            "role": "user" if _hm["role"]=="user" else "model",
+                            "parts": [_hm["content"]],
+                        })
+
+                    _preply = None; _perr = ""
+                    for _mn in _cands:
+                        try:
+                            _mdl = genai.GenerativeModel(
+                                model_name=_mn.replace("models/",""),
+                                system_instruction=_partner_prompt,
+                            )
+                            _ch = _mdl.start_chat(history=_hist_api)
+                            _preply = _ch.send_message(_partner_input).text
+                            break
+                        except Exception as _me2:
+                            _perr = str(_me2); continue
+
+                    if _preply is None:
+                        _preply = "⚠️ Partner unavailable right now: {}. Try again in a moment.".format(_perr)
+                except Exception as _pe:
+                    _preply = "⚠️ Error: {}".format(str(_pe))
+                st.markdown(_preply)
+        st.session_state["partner_messages"].append({"role": "assistant", "content": _preply})
+
+    if st.session_state.get("partner_messages"):
+        if st.button("🗑️ New conversation", key="clear_partner"):
+            st.session_state["partner_messages"] = []
+            st.rerun()
+
+    st.markdown("---")
+    st.caption(
+        "🤝 Trading Partner AI uses live Nifty data + your personal trade history. "
+        "All trade calls are for educational analysis only. Not SEBI-registered financial advice. "
+        "Always use your own judgement and set stop-losses before entering any trade."
+    )
 
 
 # ── Global footer ─────────────────────────────────────────────────────────────
