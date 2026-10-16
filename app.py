@@ -36,6 +36,10 @@ from goal_engine import (
     load_goal_cloud, save_goal_cloud,
     calculate_compounding_schedule, evaluate_goal_progress
 )
+from partner_memory import (
+    load_memories, save_memory, memory_context,
+    candles_to_text, build_partner_chart, gemini_reply,
+)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -180,6 +184,15 @@ if page in ("📈 Signal Dashboard", "🕹️ Angel One Live Cockpit", "📰 Mar
                                          placeholder="e.g. RBI rate decision",
                                          help="Forces NO TRADE warning if filled")
     refresh = st.sidebar.button("🔄 Refresh Data")
+elif page == "🤝 AI Trading Partner":
+    symbol   = st.sidebar.selectbox("Symbol", list(NSE_SYMBOLS.keys()), index=0, key="pt_symbol")
+    interval = st.sidebar.radio("Chart timeframe", ["5m", "15m"], index=1, horizontal=True, key="pt_interval")
+    period   = st.sidebar.selectbox("History", ["5d", "1mo"], index=0, key="pt_period")
+    total_capital = 50000; risk_per_trade = 2; lot_size = 75
+    watchlist = []
+    manual_event = st.sidebar.text_input("⚡ Manual Event Override", placeholder="e.g. RBI rate decision",
+                                         key="pt_event")
+    refresh = st.sidebar.button("🔄 Refresh Data", key="pt_refresh")
 elif page == "🎯 Goal & Compounding Engine":
     symbol = "NIFTY50"; interval = "1d"; period = "1y"
     total_capital = 50000; risk_per_trade = 2; lot_size = 75
@@ -3208,6 +3221,14 @@ elif page == "🤝 AI Trading Partner":
     _pt_closed = _pt_trades[_pt_trades["Result"].isin(["WIN","LOSS"])].copy() \
         if not _pt_trades.empty else pd.DataFrame()
 
+    # ── Long-term partner memory (lessons / playbook / notes) ─────────────────
+    _memory_client = _supa_client() if _is_supa() else None
+    _memory_local  = st.session_state.setdefault("_memory_local", [])
+    _memories, _mem_err = load_memories(_memory_client, _memory_local)
+    if _mem_err:
+        st.info("🧠 Memory table not found in Supabase yet — memories last only for this session. "
+                "Run the SQL at the top of `partner_memory.py` once to make them permanent.")
+
     # ─────────────────────────────────────────────────────────────────────────
     # SECTION A: LIVE SIGNAL — what to do RIGHT NOW
     # ─────────────────────────────────────────────────────────────────────────
@@ -3318,6 +3339,14 @@ elif page == "🤝 AI Trading Partner":
                     "Factor this into your decision.".format(
                         _top_pat["name"], _sp_wr, len(_same_pat_trades), _sp_pnl)
                 )
+
+        # ── Live candlestick chart — same data the partner reads ──────────────
+        st.markdown("---")
+        st.subheader("📊 Live {} chart — {} candles (we both look at this)".format(symbol, interval))
+        st.plotly_chart(build_partner_chart(_pt_df, "{} {}".format(symbol, interval)),
+                        use_container_width=True)
+        st.caption("Candles: green = up, red = down · EMA 9/21 · VWAP · Supertrend · RSI below. "
+                   "Data from Yahoo Finance may be delayed a few minutes.")
 
     st.markdown("---")
 
@@ -3610,6 +3639,17 @@ elif page == "🤝 AI Trading Partner":
         "- Never be generic. Every sentence must be specific to his data or the live chart\n"
         "- If he asks 'should I trade now' — give a YES/NO with exact entry/exit levels or exact reason to wait\n\n"
 
+        "HOW WE GROW TOGETHER:\n"
+        "- You are a discussion partner, not an oracle. Think out loud, give your read of the candles, "
+        "then challenge Raja: ask what he sees, point out where he may be biased.\n"
+        "- State your confidence honestly (low/medium/high). Nobody knows the future; never promise profit. "
+        "If the evidence is mixed, say WAIT.\n"
+        "- Use the LONG-TERM MEMORY below. If a past lesson applies, cite it. If today's evidence "
+        "contradicts a past lesson, say so.\n"
+        "- Always include a stop-loss and risk per trade.\n\n"
+
+        "=== LONG-TERM MEMORY (what we learned in earlier sessions) ===\n{memory}\n\n"
+        "=== LAST CANDLES (oldest first; G=green R=red, body % and RSI) ===\n{candles}\n\n"
         "=== LIVE CHART RIGHT NOW ===\n{live}\n\n"
         "=== HIS PSYCHOLOGY RIGHT NOW ===\n{psych}\n\n"
         "=== WHAT WE LEARNED FROM OUR TRADE HISTORY ===\n{mem}\n\n"
@@ -3620,6 +3660,8 @@ elif page == "🤝 AI Trading Partner":
         "Always end your response with one of:\n"
         "✅ ACTION: [exact trade call] or ⏳ WAIT: [exact condition to watch for]"
     ).format(
+        memory=memory_context(_memories),
+        candles=candles_to_text(_pt_df, 30) if _has_live else "Unavailable.",
         live=_live_candle_ctx,
         psych=_psych_ctx,
         mem=_pat_mem_ctx,
@@ -3670,54 +3712,94 @@ elif page == "🤝 AI Trading Partner":
 
         with st.chat_message("assistant", avatar="🤝"):
             with st.spinner("Partner is reading the charts…"):
-                try:
-                    import google.generativeai as genai
-                    genai.configure(api_key=_pk)
-
-                    _sup_models = []
-                    try:
-                        for _mm in genai.list_models():
-                            if "generateContent" in getattr(_mm, "supported_generation_methods", []):
-                                _sup_models.append(_mm.name)
-                    except Exception:
-                        pass
-                    _cands = _sup_models or [
-                        "gemini-2.5-flash", "gemini-1.5-flash",
-                        "gemini-1.5-pro",   "gemini-pro",
-                    ]
-                    _cands.sort(key=lambda n: (0 if "flash" in n.lower() else 1))
-
-                    _hist_api = []
-                    for _hm in st.session_state["partner_messages"][:-1][-8:]:
-                        _hist_api.append({
-                            "role": "user" if _hm["role"]=="user" else "model",
-                            "parts": [_hm["content"]],
-                        })
-
-                    _preply = None; _perr = ""
-                    for _mn in _cands:
-                        try:
-                            _mdl = genai.GenerativeModel(
-                                model_name=_mn.replace("models/",""),
-                                system_instruction=_partner_prompt,
-                            )
-                            _ch = _mdl.start_chat(history=_hist_api)
-                            _preply = _ch.send_message(_partner_input).text
-                            break
-                        except Exception as _me2:
-                            _perr = str(_me2); continue
-
-                    if _preply is None:
-                        _preply = "⚠️ Partner unavailable right now: {}. Try again in a moment.".format(_perr)
-                except Exception as _pe:
-                    _preply = "⚠️ Error: {}".format(str(_pe))
+                _hist_api = [
+                    {"role": "user" if _hm["role"] == "user" else "model",
+                     "parts": [_hm["content"]]}
+                    for _hm in st.session_state["partner_messages"][:-1][-10:]
+                ]
+                _preply, _perr = gemini_reply(_pk, _partner_prompt, _hist_api, _partner_input)
+                if _preply is None:
+                    _preply = "⚠️ Partner unavailable right now ({}). Try again in a moment.".format(_perr)
                 st.markdown(_preply)
         st.session_state["partner_messages"].append({"role": "assistant", "content": _preply})
 
-    if st.session_state.get("partner_messages"):
-        if st.button("🗑️ New conversation", key="clear_partner"):
+    # ── Learning loop: the partner grows from every session ──────────────────
+    st.markdown("---")
+    st.subheader("🌱 Grow Together (Partner Memory)")
+    st.caption(
+        "After a discussion, press **End session & learn**. The partner writes down what we "
+        "learned, saves it permanently, and reads it before every future talk. "
+        "After several lessons, **Consolidate** merges them into one playbook of rules."
+    )
+    _lc1, _lc2, _lc3 = st.columns(3)
+
+    if _lc1.button("📝 End session & learn", use_container_width=True,
+                   disabled=len(st.session_state["partner_messages"]) < 2):
+        _transcript = "\n".join(
+            "{}: {}".format("RAJA" if m["role"] == "user" else "PARTNER", m["content"])
+            for m in st.session_state["partner_messages"][-30:]
+        )
+        _learn_prompt = (
+            "You maintain a trading partner's long-term memory. From the conversation below, "
+            "write 3-6 short bullet LESSONS: what Raja decided and why, what worked or didn't, "
+            "mistakes or habits to watch, and concrete rules to apply next time. "
+            "Be specific (indicators, timeframe, levels, psychology). No filler, no greetings."
+        )
+        with st.spinner("Writing down what we learned…"):
+            _lesson, _lerr = gemini_reply(_pk, _learn_prompt, [], _transcript)
+        if _lesson is None:
+            st.error("Could not summarise the session ({}). Try again.".format(_lerr))
+        else:
+            _serr = save_memory(_memory_client, _memory_local, "lesson",
+                                "[{} {}] {}".format(symbol, interval, _lesson))
             st.session_state["partner_messages"] = []
+            st.session_state["_memory_saved"] = (
+                "Saved. I'll remember this next time." if not _serr else
+                "Saved for this session only — create the `partner_memory` table in Supabase "
+                "(SQL is at the top of partner_memory.py) to keep it permanently.")
             st.rerun()
+
+    _n_lessons = sum(1 for m in _memories if m.get("kind") == "lesson")
+    if _lc2.button("🧬 Consolidate into playbook", use_container_width=True,
+                   disabled=_n_lessons < 3):
+        _all_text = "\n\n".join(
+            "[{} {}] {}".format(str(m.get("created_at", ""))[:10], m.get("kind"), m["content"])
+            for m in reversed(_memories)
+        )
+        _cons_prompt = (
+            "Merge this trading partner's lessons and previous playbook into ONE updated playbook "
+            "of at most 15 numbered rules for trading Nifty options with Raja. Remove duplicates, "
+            "resolve contradictions in favour of newer evidence, keep exact conditions "
+            "(timeframe, indicator values, time of day, psychology triggers). Output only the rules."
+        )
+        with st.spinner("Consolidating…"):
+            _pb, _perr2 = gemini_reply(_pk, _cons_prompt, [], _all_text)
+        if _pb is None:
+            st.error("Could not consolidate ({}). Try again.".format(_perr2))
+        else:
+            save_memory(_memory_client, _memory_local, "playbook", _pb)
+            st.session_state["_memory_saved"] = "Playbook updated."
+            st.rerun()
+
+    if _lc3.button("🗑️ New conversation", key="clear_partner", use_container_width=True):
+        st.session_state["partner_messages"] = []
+        st.rerun()
+
+    if st.session_state.get("_memory_saved"):
+        st.success(st.session_state.pop("_memory_saved"))
+
+    _note_txt = st.text_input("Teach your partner something (rule, observation, mistake)",
+                              key="partner_teach", max_chars=500)
+    if st.button("➕ Save to memory", key="partner_teach_btn") and _note_txt.strip():
+        save_memory(_memory_client, _memory_local, "note", _note_txt)
+        st.rerun()
+
+    with st.expander("📚 What my partner remembers ({} items)".format(len(_memories))):
+        if not _memories:
+            st.info("Nothing yet. Have a discussion, then press **End session & learn**.")
+        for _m in _memories[:20]:
+            st.markdown("**{} · {}**\n\n{}".format(
+                str(_m.get("created_at", ""))[:10], _m.get("kind", "").upper(), _m["content"]))
 
     st.markdown("---")
     st.caption(
