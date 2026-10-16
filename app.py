@@ -1173,6 +1173,59 @@ if page == "📈 Signal Dashboard":
     c6.metric("EMA Cross",  summary["ema_cross"])
     st.markdown("---")
 
+    # ── MARKET TURNING ALERT ──────────────────────────────────────────────────
+    if len(df_chart) >= 5:
+        _neg_signals = []
+        _pos_signals = []
+        _r5  = df_chart.iloc[-5:]
+        _prv = df_chart.iloc[-4:-1]
+        _lb  = df_chart.iloc[-1]
+        _hv  = list(_r5["MACD_hist"])
+        if _hv[-1] < _hv[-2] < _hv[-3] and _hv[-1] > 0:
+            _neg_signals.append("MACD histogram shrinking — bullish momentum fading")
+        if _hv[-1] > _hv[-2] > _hv[-3] and _hv[-1] < 0:
+            _pos_signals.append("MACD histogram expanding upward — bearish momentum fading")
+        _rv = list(_r5["RSI"])
+        if _rv[-1] < _rv[-2] and _rv[-2] > 60:
+            _neg_signals.append("RSI rolling over from overbought ({:.1f}→{:.1f})".format(_rv[-2],_rv[-1]))
+        if _rv[-1] > _rv[-2] and _rv[-2] < 40:
+            _pos_signals.append("RSI bouncing from oversold ({:.1f}→{:.1f})".format(_rv[-2],_rv[-1]))
+        if float(_prv["Close"].iloc[-1]) > float(_prv["EMA_9"].iloc[-1]) and float(_lb["Close"]) < float(_lb["EMA_9"]):
+            _neg_signals.append("Price just crossed BELOW EMA-9 — short-term trend broken")
+        if float(_prv["Close"].iloc[-1]) < float(_prv["EMA_9"].iloc[-1]) and float(_lb["Close"]) > float(_lb["EMA_9"]):
+            _pos_signals.append("Price just crossed ABOVE EMA-9 — short-term trend recovering")
+        if float(_prv["ST_trend"].iloc[-1]) == 1.0 and float(_lb["ST_trend"]) == -1.0:
+            _neg_signals.append("⚡ Supertrend just FLIPPED to BEARISH — strong reversal!")
+        if float(_prv["ST_trend"].iloc[-1]) == -1.0 and float(_lb["ST_trend"]) == 1.0:
+            _pos_signals.append("⚡ Supertrend just FLIPPED to BULLISH — strong recovery!")
+        if float(_prv["Close"].iloc[-1]) > float(_prv["VWAP"].iloc[-1]) and float(_lb["Close"]) < float(_lb["VWAP"]):
+            _neg_signals.append("Price dropped BELOW VWAP — institutions turning sellers")
+        if float(_prv["Close"].iloc[-1]) < float(_prv["VWAP"].iloc[-1]) and float(_lb["Close"]) > float(_lb["VWAP"]):
+            _pos_signals.append("Price recovered ABOVE VWAP — institutions turning buyers")
+
+        if len(_neg_signals) >= 2:
+            st.markdown(
+                "<div style='background:#450a0a;border:2px solid #dc2626;border-radius:10px;"
+                "padding:14px 20px;margin-bottom:14px'>"
+                "<div style='font-size:18px;font-weight:900;color:#fca5a5'>🚨 MARKET TURNING NEGATIVE RIGHT NOW</div>"
+                "<div style='font-size:13px;color:#fecaca;margin-top:6px;line-height:1.7'>"
+                + "<br>".join("• " + r for r in _neg_signals) +
+                "</div><div style='font-size:12px;color:#f87171;margin-top:8px'>"
+                "⚡ If you are holding a CALL — tighten stop-loss immediately or exit now.</div></div>",
+                unsafe_allow_html=True,
+            )
+        elif len(_pos_signals) >= 2:
+            st.markdown(
+                "<div style='background:#052e16;border:2px solid #16a34a;border-radius:10px;"
+                "padding:14px 20px;margin-bottom:14px'>"
+                "<div style='font-size:18px;font-weight:900;color:#86efac'>💚 MARKET RECOVERING BULLISH RIGHT NOW</div>"
+                "<div style='font-size:13px;color:#bbf7d0;margin-top:6px;line-height:1.7'>"
+                + "<br>".join("• " + r for r in _pos_signals) +
+                "</div><div style='font-size:12px;color:#4ade80;margin-top:8px'>"
+                "⚡ If you are holding a PUT — tighten stop-loss immediately or exit now.</div></div>",
+                unsafe_allow_html=True,
+            )
+
     # ── BIG ACTION BANNER ─────────────────────────────────────────────────────
     _ps_quick  = compute_precision_signal(df_chart, summary, decision, vdict)
     _qdirn     = _ps_quick.get("direction", "WAIT")
@@ -2461,7 +2514,280 @@ elif page == "⬇️ Export":
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "🤖 AI Trading Coach":
     st.title("🤖 AI Trading Coach")
-    st.caption("Powered by Google Gemini (free) · Discuss your trades, get step-by-step guidance, ask anything about F&O.")
+    st.caption("Powered by Google Gemini (free) · Your trade mistake analyser · Entry/exit timing coach")
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 1: TRADE MISTAKE ANALYSIS (reads your actual journal)
+    # ══════════════════════════════════════════════════════════════════════════
+    st.subheader("🔍 Your Trade Mistake Report — Based on YOUR actual trades")
+    st.caption("The AI reads every trade you have logged and tells you exactly what timing and psychology mistakes you made.")
+
+    _coach_df = load_trades()
+    _closed_coach = _coach_df[_coach_df["Result"].isin(["WIN","LOSS"])].copy() if not _coach_df.empty else pd.DataFrame()
+
+    if _closed_coach.empty:
+        st.info(
+            "📭 No closed trades found yet. Go to **📓 Log Trade** and record your trades. "
+            "Once you have trades, come back here — the AI will analyse your specific mistakes."
+        )
+        _show_coach_analysis = False
+    else:
+        _show_coach_analysis = True
+        _c_pnl    = pd.to_numeric(_closed_coach["Net P&L"],   errors="coerce").fillna(0)
+        _c_rsi    = pd.to_numeric(_closed_coach["Entry RSI"],  errors="coerce")
+        _c_adx    = pd.to_numeric(_closed_coach["Entry ADX"],  errors="coerce")
+        _c_total  = len(_closed_coach)
+        _c_wins   = (_closed_coach["Result"] == "WIN").sum()
+        _c_wr     = round(_c_wins / _c_total * 100, 1) if _c_total else 0
+
+        # Metrics row
+        _cm1,_cm2,_cm3,_cm4 = st.columns(4)
+        _cm1.metric("Trades Analysed", str(_c_total))
+        _cm2.metric("Your Win Rate",   "{:.1f}%".format(_c_wr),
+                    "Above avg ✅" if _c_wr>=50 else "Needs work ⚠️")
+        _cm3.metric("Net P&L (All)",   "Rs {:,.0f}".format(_c_pnl.sum()))
+        _cm4.metric("Avg P&L/Trade",   "Rs {:,.0f}".format(_c_pnl.mean()))
+
+        st.markdown("---")
+
+        # ── Collect mistakes ──────────────────────────────────────────────────
+        _timing_err = []; _psych_err = []
+
+        # T1: RSI extreme entry
+        _rsi_ext = _closed_coach[_c_rsi.gt(65) | _c_rsi.lt(35)]
+        if not _rsi_ext.empty:
+            _ep = pd.to_numeric(_rsi_ext["Net P&L"], errors="coerce").sum()
+            _el = (_rsi_ext["Result"]=="LOSS").sum()
+            _timing_err.append({"mistake":"Entered in EXTREME RSI zone (>65 or <35)","count":len(_rsi_ext),
+                "impact":"Rs {:,.0f} total P&L".format(_ep),"sev":"HIGH" if _el>len(_rsi_ext)//2 else "MEDIUM",
+                "fix":"RSI above 65 = overbought. RSI below 35 = oversold. Both mean reversal risk is high. "
+                      "Wait for RSI 40–60 before entering. You did this {}×.".format(len(_rsi_ext))})
+
+        # T2: Against Supertrend
+        if "Supertrend" in _closed_coach.columns and "Option Type" in _closed_coach.columns:
+            _st_conf = _closed_coach[
+                ((_closed_coach["Supertrend"].str.upper()=="BEARISH") & (_closed_coach["Option Type"].str.upper()=="CALL")) |
+                ((_closed_coach["Supertrend"].str.upper()=="BULLISH") & (_closed_coach["Option Type"].str.upper()=="PUT"))
+            ]
+            if not _st_conf.empty:
+                _sp = pd.to_numeric(_st_conf["Net P&L"], errors="coerce").sum()
+                _timing_err.append({"mistake":"Entered AGAINST Supertrend direction","count":len(_st_conf),
+                    "impact":"Rs {:,.0f} total P&L".format(_sp),"sev":"HIGH",
+                    "fix":"If Supertrend is BEARISH → only trade PUT. If BULLISH → only trade CALL. "
+                          "Going against Supertrend is the most common way to lose in F&O. You did this {}×.".format(len(_st_conf))})
+
+        # T3: Dashboard said WAIT
+        if "Dashboard Said" in _closed_coach.columns:
+            _iw = _closed_coach[_closed_coach["Dashboard Said"].str.upper()=="WAIT"]
+            if not _iw.empty:
+                _iwp = pd.to_numeric(_iw["Net P&L"], errors="coerce").sum()
+                _iwr = round((_iw["Result"]=="WIN").sum()/len(_iw)*100, 1)
+                _timing_err.append({"mistake":"Entered when Dashboard said WAIT","count":len(_iw),
+                    "impact":"Rs {:,.0f} total P&L (win rate: {}%)".format(_iwp,_iwr),"sev":"HIGH",
+                    "fix":"Dashboard said WAIT {} time(s) but you entered anyway. "
+                          "Your win rate on those trades was {}%. "
+                          "The system is trying to protect you.".format(len(_iw),_iwr)})
+
+        # T4: Weak ADX
+        _adx_w = _closed_coach[_c_adx.lt(20) & _c_adx.gt(0)]
+        if not _adx_w.empty:
+            _ap = pd.to_numeric(_adx_w["Net P&L"], errors="coerce").sum()
+            _timing_err.append({"mistake":"Entered when ADX < 20 (ranging/choppy market)","count":len(_adx_w),
+                "impact":"Rs {:,.0f} total P&L".format(_ap),"sev":"MEDIUM",
+                "fix":"ADX below 20 = no real trend. Options decay fast in choppy conditions. "
+                      "Only enter when ADX > 25. You did this {}×.".format(len(_adx_w))})
+
+        # P1: Revenge trading (loss>500 same day)
+        if "Date" in _closed_coach.columns:
+            _cs = _closed_coach.copy()
+            _cs["_dt"] = pd.to_datetime(_cs["Date"], errors="coerce")
+            _cs = _cs.sort_values("_dt").reset_index(drop=True)
+            _rev = 0
+            for _i in range(1,len(_cs)):
+                _prev_r=_cs.iloc[_i-1]; _curr_r=_cs.iloc[_i]
+                if (_prev_r["Result"]=="LOSS" and _curr_r["_dt"]==_prev_r["_dt"]
+                        and pd.to_numeric(_prev_r["Net P&L"],errors="coerce")<-500):
+                    _rev += 1
+            if _rev>0:
+                _psych_err.append({"mistake":"Revenge Trading — another trade same day after big loss","count":_rev,
+                    "sev":"HIGH",
+                    "fix":"After a loss > Rs 500 your brain is flooded with cortisol (stress hormone). "
+                          "You traded on emotion, not analysis. Rule: STOP after any loss > Rs 500. "
+                          "Close the app. Come back tomorrow."})
+
+        # P2: Overtrading
+        if "Date" in _closed_coach.columns:
+            _dc = _closed_coach.groupby("Date").size()
+            _ot = _dc[_dc>2]
+            if not _ot.empty:
+                _otl = sum(1 for _d,_ in _ot.items()
+                           if pd.to_numeric(_closed_coach[_closed_coach["Date"]==_d]["Net P&L"],errors="coerce").sum()<0)
+                _psych_err.append({"mistake":"Overtraded — 3+ trades in a single day","count":len(_ot),
+                    "sev":"HIGH" if _otl>0 else "MEDIUM",
+                    "fix":"More than 2 F&O trades per day = overtrading. "
+                          "You did this on {} day(s), {} of which were losing days. "
+                          "Rule: Maximum 2 trades per day. After 2, close the app.".format(len(_ot),_otl)})
+
+        # P3: Opposite to dashboard
+        if "Dashboard Said" in _closed_coach.columns and "Option Type" in _closed_coach.columns:
+            _opp = _closed_coach[
+                ((_closed_coach["Dashboard Said"].str.upper()=="PUT")  & (_closed_coach["Option Type"].str.upper()=="CALL")) |
+                ((_closed_coach["Dashboard Said"].str.upper()=="CALL") & (_closed_coach["Option Type"].str.upper()=="PUT"))
+            ]
+            if not _opp.empty:
+                _op = pd.to_numeric(_opp["Net P&L"], errors="coerce").sum()
+                _psych_err.append({"mistake":"Traded OPPOSITE to Dashboard signal","count":len(_opp),
+                    "sev":"HIGH",
+                    "fix":"You went opposite to your own system {}× — 'I know better' thinking. "
+                          "P&L on those trades: Rs {:,.0f}.".format(len(_opp),_op)})
+
+        # ── Report card ───────────────────────────────────────────────────────
+        _t_err_n  = sum(m["count"] for m in _timing_err)
+        _p_err_n  = sum(m["count"] for m in _psych_err)
+        _t_sc     = max(0, 100 - (_t_err_n/max(_c_total,1))*150)
+        _p_sc     = max(0, 100 - (_p_err_n/max(_c_total,1))*150)
+        _o_sc     = round(_t_sc*0.5 + _p_sc*0.5, 0)
+        def _g(s): return "A" if s>=85 else ("B" if s>=70 else ("C" if s>=55 else ("D" if s>=40 else "F")))
+        _gc = {"A":"#16a34a","B":"#2563eb","C":"#d97706","D":"#dc2626","F":"#7f1d1d"}
+
+        _rc_html = "<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px'>"
+        for _area,_sc,_sc_v in [("⏱️ Timing",_g(_t_sc),int(_t_sc)),
+                                  ("🧠 Psychology",_g(_p_sc),int(_p_sc)),
+                                  ("🏆 Overall",_g(_o_sc),int(_o_sc))]:
+            _bg2 = _gc.get(_sc,"#374151")
+            _rc_html += ("<div style='background:{b};border-radius:10px;padding:14px 18px;"
+                         "min-width:140px;text-align:center;flex:1'>"
+                         "<div style='font-size:34px;font-weight:900;color:#fff'>{g}</div>"
+                         "<div style='font-size:12px;color:rgba(255,255,255,0.85)'>{a}</div>"
+                         "<div style='font-size:11px;color:rgba(255,255,255,0.55)'>{v}/100</div>"
+                         "</div>").format(b=_bg2,g=_sc,a=_area,v=_sc_v)
+        _rc_html += "</div>"
+        st.subheader("📋 Your Report Card")
+        st.markdown(_rc_html, unsafe_allow_html=True)
+
+        # ── Best / worst pattern ──────────────────────────────────────────────
+        _w_df = _closed_coach[_closed_coach["Result"]=="WIN"]
+        _l_df = _closed_coach[_closed_coach["Result"]=="LOSS"]
+        _bw1,_bw2 = st.columns(2)
+        with _bw1:
+            if not _w_df.empty:
+                _bst = _w_df["Supertrend"].mode().iloc[0] if "Supertrend" in _w_df.columns and not _w_df["Supertrend"].mode().empty else "—"
+                _btp = _w_df["Option Type"].mode().iloc[0] if "Option Type" in _w_df.columns and not _w_df["Option Type"].mode().empty else "—"
+                _brsi= round(_c_rsi[_closed_coach["Result"]=="WIN"].mean(),0)
+                st.markdown("<div style='background:#052e16;border:1px solid #16a34a;border-radius:8px;padding:12px'>"
+                    "<b style='color:#4ade80'>✅ Your WINNING pattern:</b><br>"
+                    "<span style='font-size:13px;color:#bbf7d0'>{} option · Supertrend {} · RSI ~{:.0f}</span>"
+                    "</div>".format(_btp,_bst,_brsi), unsafe_allow_html=True)
+        with _bw2:
+            if not _l_df.empty:
+                _lst = _l_df["Supertrend"].mode().iloc[0] if "Supertrend" in _l_df.columns and not _l_df["Supertrend"].mode().empty else "—"
+                _ltp = _l_df["Option Type"].mode().iloc[0] if "Option Type" in _l_df.columns and not _l_df["Option Type"].mode().empty else "—"
+                _lrsi= round(_c_rsi[_closed_coach["Result"]=="LOSS"].mean(),0)
+                st.markdown("<div style='background:#450a0a;border:1px solid #dc2626;border-radius:8px;padding:12px'>"
+                    "<b style='color:#f87171'>❌ Your LOSING pattern:</b><br>"
+                    "<span style='font-size:13px;color:#fecaca'>{} option · Supertrend {} · RSI ~{:.0f}</span>"
+                    "</div>".format(_ltp,_lst,_lrsi), unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # ── Timing mistakes ───────────────────────────────────────────────────
+        if _timing_err:
+            st.subheader("⏱️ Timing Mistakes in Your Trades")
+            for _m in _timing_err:
+                _sc2 = "#450a0a" if _m["sev"]=="HIGH" else "#422006"
+                _bd2 = "#dc2626" if _m["sev"]=="HIGH" else "#d97706"
+                _tc2 = "#fca5a5" if _m["sev"]=="HIGH" else "#fbbf24"
+                st.markdown(
+                    "<div style='background:{bg};border:1.5px solid {bd};border-radius:9px;"
+                    "padding:13px 17px;margin-bottom:9px'>"
+                    "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                    "<b style='color:{tc};font-size:14px'>❌ {mk}</b>"
+                    "<span style='font-size:11px;background:{bd};color:#fff;padding:2px 8px;border-radius:20px'>"
+                    "{sv} · {cnt}×</span></div>"
+                    "<div style='font-size:12px;color:#fde68a;margin-top:5px'>Impact: {imp}</div>"
+                    "<div style='font-size:13px;color:#e2e8f0;margin-top:7px;line-height:1.7'>"
+                    "💡 {fix}</div></div>".format(
+                        bg=_sc2,bd=_bd2,tc=_tc2,mk=_m["mistake"],
+                        sv=_m["sev"],cnt=_m["count"],imp=_m["impact"],fix=_m["fix"]),
+                    unsafe_allow_html=True)
+        else:
+            st.success("✅ No timing mistakes found. Great discipline!")
+
+        st.markdown("---")
+
+        # ── Psychology mistakes ───────────────────────────────────────────────
+        if _psych_err:
+            st.subheader("🧠 Psychology & Discipline Mistakes")
+            for _m in _psych_err:
+                _sc3 = "#2d1b69" if _m["sev"]=="HIGH" else "#422006"
+                _bd3 = "#7c3aed" if _m["sev"]=="HIGH" else "#d97706"
+                _tc3 = "#c4b5fd" if _m["sev"]=="HIGH" else "#fbbf24"
+                st.markdown(
+                    "<div style='background:{bg};border:1.5px solid {bd};border-radius:9px;"
+                    "padding:13px 17px;margin-bottom:9px'>"
+                    "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                    "<b style='color:{tc};font-size:14px'>🧠 {mk}</b>"
+                    "<span style='font-size:11px;background:{bd};color:#fff;padding:2px 8px;border-radius:20px'>"
+                    "{sv} · {cnt}×</span></div>"
+                    "<div style='font-size:13px;color:#e2e8f0;margin-top:7px;line-height:1.7'>"
+                    "💡 {fix}</div></div>".format(
+                        bg=_sc3,bd=_bd3,tc=_tc3,mk=_m["mistake"],
+                        sv=_m["sev"],cnt=_m["count"],fix=_m["fix"]),
+                    unsafe_allow_html=True)
+        else:
+            st.success("✅ No psychology mistakes detected. Great emotional discipline!")
+
+        st.markdown("---")
+
+        # ── Personal rules derived from data ─────────────────────────────────
+        st.subheader("📌 Your Personal Rules — Built From YOUR Data")
+        _rules = []
+        if _c_wr>=50: _rules.append("✅ Your win rate {:.0f}% is above 50%. Protect it.".format(_c_wr))
+        else:         _rules.append("⚠️ Win rate {:.0f}% is below 50%. Focus on fewer, higher-quality trades.".format(_c_wr))
+        if _t_err_n>0: _rules.append("📌 RULE #1: Check RSI zone + Supertrend alignment BEFORE clicking buy.")
+        if any("Revenge" in m["mistake"] for m in _psych_err):
+            _rules.append("📌 RULE #2: After any loss > Rs 500 — close the app for the day. No exceptions.")
+        if any("Overtrad" in m["mistake"] for m in _psych_err):
+            _rules.append("📌 RULE #3: Maximum 2 trades per day. After 2, you are done.")
+        if any("WAIT" in m["mistake"] for m in _timing_err):
+            _rules.append("📌 RULE #4: When dashboard says WAIT, close your broker app immediately.")
+        for _r in _rules:
+            _bg3 = "#f0fdf4" if _r.startswith("✅") else "#fffbeb"
+            _bd4 = "#86efac" if _r.startswith("✅") else "#fcd34d"
+            st.markdown("<div style='background:{b};border:1px solid {bd};border-radius:7px;"
+                        "padding:10px 15px;margin-bottom:7px;font-size:13px;color:#1e293b'>{r}</div>".format(
+                        b=_bg3,bd=_bd4,r=_r), unsafe_allow_html=True)
+
+        # ── Trade table with flags ────────────────────────────────────────────
+        st.markdown("---")
+        st.subheader("📊 Every Trade — With Coach Flags")
+        _flags = []
+        for _i2, _row2 in _closed_coach.iterrows():
+            _f2 = []
+            _rv2 = pd.to_numeric(_row2.get("Entry RSI",""), errors="coerce")
+            _av2 = pd.to_numeric(_row2.get("Entry ADX",""), errors="coerce")
+            _sv2 = str(_row2.get("Supertrend","")).upper()
+            _ov2 = str(_row2.get("Option Type","")).upper()
+            _dv2 = str(_row2.get("Dashboard Said","")).upper()
+            if pd.notna(_rv2) and (_rv2>65 or _rv2<35): _f2.append("⚠️ RSI Extreme")
+            if _sv2=="BEARISH" and _ov2=="CALL":         _f2.append("❌ Against ST")
+            if _sv2=="BULLISH" and _ov2=="PUT":          _f2.append("❌ Against ST")
+            if _dv2=="WAIT":                             _f2.append("⚠️ Dashboard=WAIT")
+            if _dv2 in ("PUT","CALL") and _dv2!=_ov2:   _f2.append("❌ Ignored Signal")
+            if pd.notna(_av2) and _av2<20:               _f2.append("⚠️ ADX Weak")
+            if not _f2:                                  _f2.append("✅ Clean Entry")
+            _flags.append(" | ".join(_f2))
+        _closed_coach["⚑ Coach Flags"] = _flags
+        _dcols = ["Trade #","Date","Option Type","Strike","Entry RSI","Entry ADX",
+                  "Supertrend","Dashboard Said","Net P&L","Result","⚑ Coach Flags"]
+        _avcols = [c for c in _dcols if c in _closed_coach.columns]
+        st.dataframe(_closed_coach[_avcols].sort_values("Trade #",ascending=False),
+                     use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.markdown("### 💬 Chat with AI Coach — Ask anything about your trades")
+    st.caption("Powered by Google Gemini (free) · The AI already knows your stats above.")
     st.markdown("---")
 
     # ── API key setup ────────────────────────────────────────────────────────
@@ -2492,65 +2818,254 @@ elif page == "🤖 AI Trading Coach":
         st.info("👆 Add your free Gemini API key above to start chatting with the AI Trading Coach.")
         st.stop()
 
-    # ── Build live context from dashboard data ────────────────────────────────
-    _today_ctx = datetime.now(IST).strftime("%A, %d %b %Y %I:%M %p IST")
-    _vd = build_day_verdict("")
+    # ── Build DEEP personalised context from all trade data + mistake analysis ─
+    _today_ctx   = datetime.now(IST).strftime("%A, %d %b %Y %I:%M %p IST")
+    _vd          = build_day_verdict("")
     _trade_stats = stats  # already computed at top of file
 
-    SYSTEM_PROMPT = """You are an expert Nifty F&O (Futures & Options) trading coach for Indian markets.
-You help retail traders understand NSE options strategies, risk management, trade setups, and discipline.
-You are friendly, practical, and never recommend specific buy/sell calls — instead you teach the process.
+    # Build actual trade rows to inject (last 20 closed trades)
+    _coach_trades_ctx = load_trades()
+    _closed_ctx = _coach_trades_ctx[
+        _coach_trades_ctx["Result"].isin(["WIN","LOSS"])
+    ].copy() if not _coach_trades_ctx.empty else pd.DataFrame()
 
-Always remind the trader that F&O trading carries high risk and can result in loss of capital.
-Never provide specific financial advice; focus on education, discipline, and process.
+    _trade_rows_str = "No trades logged yet."
+    _mistake_summary = "No trade history — no mistakes to analyse yet."
+    _personal_rules_str = ""
+    _best_pattern_str = "—"
+    _worst_pattern_str = "—"
 
-Current live context from the trader's dashboard:
-- Date/Time: {dt}
-- Day Verdict: {verdict} ({vdetail})
-- Today's Checks: {passn} passed, {warnn} cautions, {failn} failed
-- Total Trades Logged: {total_trades}
-- Win Rate: {win_rate}%
-- Total Net P&L: Rs {total_pnl:,.0f}
-- Best Trade: Rs {best:,.0f} | Worst Trade: Rs {worst:,.0f}
-- Avg Win: Rs {avg_win:,.0f} | Avg Loss: Rs {avg_loss:,.0f}
-- Reward:Risk Ratio: {rr}
-- Max Drawdown: Rs {mdd:,.0f}
-- Total Charges Paid: Rs {charges:,.0f}
+    if not _closed_ctx.empty:
+        # Format last 20 trades as a compact table for the prompt
+        _last20 = _closed_ctx.tail(20)
+        _rows = []
+        for _, _r in _last20.iterrows():
+            _rows.append(
+                "Trade#{tn} | {dt} | {ot} | Strike {st} | Entry {ep} | Exit {ex} | "
+                "RSI@entry {rsi} | ADX@entry {adx} | Supertrend {spd} | Dashboard said {ds} | "
+                "Result {res} | Net P&L Rs {pnl} | Lessons: {les}".format(
+                    tn=_r.get("Trade #","?"),
+                    dt=str(_r.get("Date",""))[:10],
+                    ot=_r.get("Option Type","?"),
+                    st=_r.get("Strike","?"),
+                    ep=_r.get("Entry Price","?"),
+                    ex=_r.get("Exit Price","?") if str(_r.get("Exit Price","")).strip() else "open",
+                    rsi=_r.get("Entry RSI","?"),
+                    adx=_r.get("Entry ADX","?"),
+                    spd=_r.get("Supertrend","?"),
+                    ds=_r.get("Dashboard Said","?"),
+                    res=_r.get("Result","?"),
+                    pnl=_r.get("Net P&L","?"),
+                    les=str(_r.get("Lessons Learned","")).strip() or "none noted",
+                )
+            )
+        _trade_rows_str = "\n".join(_rows)
 
-Use this context to give personalised, actionable guidance.
-When the trader asks "should I trade today?" use the Day Verdict to explain.
-When they ask about their stats, reference the numbers above.
-Keep responses concise — under 300 words unless a detailed explanation is requested.
-""".format(
+        # Run mistake analysis inline
+        _c_rsi_ctx = pd.to_numeric(_closed_ctx["Entry RSI"], errors="coerce")
+        _c_adx_ctx = pd.to_numeric(_closed_ctx["Entry ADX"], errors="coerce")
+        _c_total_ctx = len(_closed_ctx)
+        _c_wr_ctx = round((_closed_ctx["Result"]=="WIN").sum() / _c_total_ctx * 100, 1)
+
+        _mistakes_found = []
+
+        # RSI extreme entries
+        _rsi_ext_ctx = _closed_ctx[_c_rsi_ctx.gt(65) | _c_rsi_ctx.lt(35)]
+        if not _rsi_ext_ctx.empty:
+            _rp = pd.to_numeric(_rsi_ext_ctx["Net P&L"], errors="coerce").sum()
+            _mistakes_found.append(
+                "TIMING: Entered {n}x in extreme RSI zone (>65 or <35). "
+                "P&L on those trades: Rs {p:,.0f}. "
+                "These are high-reversal-risk entries.".format(n=len(_rsi_ext_ctx), p=_rp)
+            )
+
+        # Against Supertrend
+        if "Supertrend" in _closed_ctx.columns and "Option Type" in _closed_ctx.columns:
+            _st_ctx = _closed_ctx[
+                ((_closed_ctx["Supertrend"].str.upper()=="BEARISH") & (_closed_ctx["Option Type"].str.upper()=="CALL")) |
+                ((_closed_ctx["Supertrend"].str.upper()=="BULLISH") & (_closed_ctx["Option Type"].str.upper()=="PUT"))
+            ]
+            if not _st_ctx.empty:
+                _sp2 = pd.to_numeric(_st_ctx["Net P&L"], errors="coerce").sum()
+                _mistakes_found.append(
+                    "TIMING: Entered against Supertrend {n}x (BEARISH but bought CALL, or BULLISH but bought PUT). "
+                    "P&L: Rs {p:,.0f}. This is trading against the primary trend.".format(n=len(_st_ctx), p=_sp2)
+                )
+
+        # Dashboard said WAIT but entered
+        if "Dashboard Said" in _closed_ctx.columns:
+            _iw_ctx = _closed_ctx[_closed_ctx["Dashboard Said"].str.upper()=="WAIT"]
+            if not _iw_ctx.empty:
+                _iwp2 = pd.to_numeric(_iw_ctx["Net P&L"], errors="coerce").sum()
+                _iwr2 = round((_iw_ctx["Result"]=="WIN").sum()/len(_iw_ctx)*100,1)
+                _mistakes_found.append(
+                    "TIMING: Entered {n}x when dashboard said WAIT. "
+                    "Win rate on those: {wr}%. P&L: Rs {p:,.0f}. "
+                    "Trader is ignoring the system's caution signal.".format(
+                        n=len(_iw_ctx), wr=_iwr2, p=_iwp2)
+                )
+
+        # Opposite to dashboard
+        if "Dashboard Said" in _closed_ctx.columns and "Option Type" in _closed_ctx.columns:
+            _opp_ctx = _closed_ctx[
+                ((_closed_ctx["Dashboard Said"].str.upper()=="PUT") & (_closed_ctx["Option Type"].str.upper()=="CALL")) |
+                ((_closed_ctx["Dashboard Said"].str.upper()=="CALL") & (_closed_ctx["Option Type"].str.upper()=="PUT"))
+            ]
+            if not _opp_ctx.empty:
+                _op2 = pd.to_numeric(_opp_ctx["Net P&L"], errors="coerce").sum()
+                _mistakes_found.append(
+                    "PSYCHOLOGY: Traded opposite to dashboard signal {n}x. "
+                    "P&L: Rs {p:,.0f}. Classic overconfidence / 'I know better' pattern.".format(
+                        n=len(_opp_ctx), p=_op2)
+                )
+
+        # Revenge trading
+        if "Date" in _closed_ctx.columns:
+            _cs2 = _closed_ctx.copy()
+            _cs2["_dt2"] = pd.to_datetime(_cs2["Date"], errors="coerce")
+            _cs2 = _cs2.sort_values("_dt2").reset_index(drop=True)
+            _rev2 = 0
+            for _i3 in range(1, len(_cs2)):
+                _p3 = _cs2.iloc[_i3-1]; _c3 = _cs2.iloc[_i3]
+                if (_p3["Result"]=="LOSS" and _c3["_dt2"]==_p3["_dt2"]
+                        and pd.to_numeric(_p3["Net P&L"], errors="coerce") < -500):
+                    _rev2 += 1
+            if _rev2 > 0:
+                _mistakes_found.append(
+                    "PSYCHOLOGY: Revenge traded {n}x — placed a new trade the same day "
+                    "immediately after a loss > Rs 500. Classic emotional trading.".format(n=_rev2)
+                )
+
+        # Overtrading
+        if "Date" in _closed_ctx.columns:
+            _dc2 = _closed_ctx.groupby("Date").size()
+            _ot2 = _dc2[_dc2 > 2]
+            if not _ot2.empty:
+                _mistakes_found.append(
+                    "PSYCHOLOGY: Overtraded on {n} day(s) — placed 3+ trades in a single day. "
+                    "This is the most common capital-destruction pattern.".format(n=len(_ot2))
+                )
+
+        # ADX weak
+        _adx_w2 = _closed_ctx[_c_adx_ctx.lt(20) & _c_adx_ctx.gt(0)]
+        if not _adx_w2.empty:
+            _mistakes_found.append(
+                "TIMING: Entered {n}x when ADX was below 20 (choppy/ranging market). "
+                "Options lose premium fast in no-trend conditions.".format(n=len(_adx_w2))
+            )
+
+        _mistake_summary = "\n".join("- " + m for m in _mistakes_found) if _mistakes_found else "No specific mistakes detected in current data."
+
+        # Personal rules
+        _pr = []
+        if _c_wr_ctx < 50: _pr.append("Win rate is {:.0f}% — below 50%, needs improvement".format(_c_wr_ctx))
+        if _rsi_ext_ctx is not None and not _rsi_ext_ctx.empty: _pr.append("Must check RSI zone before every entry")
+        if any("Revenge" in m for m in _mistakes_found): _pr.append("Must stop trading after any loss > Rs 500")
+        if any("Overtrad" in m for m in _mistakes_found): _pr.append("Maximum 2 trades per day — hard rule")
+        _personal_rules_str = "; ".join(_pr) if _pr else "No specific rules triggered yet."
+
+        # Best/worst pattern
+        _w2 = _closed_ctx[_closed_ctx["Result"]=="WIN"]
+        _l2 = _closed_ctx[_closed_ctx["Result"]=="LOSS"]
+        if not _w2.empty and "Option Type" in _w2.columns:
+            _btp2 = _w2["Option Type"].mode().iloc[0] if not _w2["Option Type"].mode().empty else "—"
+            _bst2 = _w2["Supertrend"].mode().iloc[0] if "Supertrend" in _w2.columns and not _w2["Supertrend"].mode().empty else "—"
+            _brsi2 = round(_c_rsi_ctx[_closed_ctx["Result"]=="WIN"].mean(), 0)
+            _best_pattern_str = "{} option, Supertrend {}, RSI ~{:.0f}".format(_btp2, _bst2, _brsi2)
+        if not _l2.empty and "Option Type" in _l2.columns:
+            _ltp2 = _l2["Option Type"].mode().iloc[0] if not _l2["Option Type"].mode().empty else "—"
+            _lst2 = _l2["Supertrend"].mode().iloc[0] if "Supertrend" in _l2.columns and not _l2["Supertrend"].mode().empty else "—"
+            _lrsi2 = round(_c_rsi_ctx[_closed_ctx["Result"]=="LOSS"].mean(), 0)
+            _worst_pattern_str = "{} option, Supertrend {}, RSI ~{:.0f}".format(_ltp2, _lst2, _lrsi2)
+
+    # Pre-compute conditional labels so .format() stays clean
+    _wr_val  = _trade_stats["win_rate"]
+    _rr_val  = _trade_stats["reward_risk"]
+    _wr_note = "(BELOW 50% — needs urgent improvement)" if _wr_val < 50 else "(above 50% — protect it)"
+    _rr_note = "(BAD — avg loss bigger than avg win)" if _rr_val < 1.0 else ("(OK — improve to 1.5+)" if _rr_val < 1.5 else "(GOOD)")
+
+    SYSTEM_PROMPT = (
+        "You are a brutally honest, specific, personal Nifty F&O trading coach for an Indian retail trader.\n\n"
+        "CRITICAL RULES FOR YOUR RESPONSES:\n"
+        "1. NEVER give generic advice. Every answer MUST reference the trader's actual data shown below.\n"
+        "2. If the trader asks about their mistakes — name the exact mistakes found in their trade history.\n"
+        "3. If they ask why they are losing — point to the specific patterns in their data.\n"
+        "4. If they ask should they trade today — use the Day Verdict and current time window.\n"
+        "5. Be direct. Do not pad responses. Under 250 words unless they ask for detail.\n"
+        "6. Always cite numbers from their data (e.g. 'You entered RSI extreme zone 3 times').\n"
+        "7. Never say 'it depends' without immediately saying what it depends on and what YOU recommend.\n\n"
+        "=== TRADER'S LIVE PROFILE ===\n"
+        "Date/Time: {dt}\n"
+        "Today's Market Verdict: {verdict}\n"
+        "Verdict Detail: {vdetail}\n"
+        "Checks: {passn} passed | {warnn} cautions | {failn} failed\n"
+        "Time Window Right Now: {tw_label} — {tw_note}\n\n"
+        "=== TRADER'S PERFORMANCE STATS ===\n"
+        "Total Closed Trades: {total_trades}\n"
+        "Win Rate: {win_rate}% {wr_note}\n"
+        "Total Net P&L: Rs {total_pnl:,.0f}\n"
+        "Best Trade: Rs {best:,.0f} | Worst Trade: Rs {worst:,.0f}\n"
+        "Avg Win: Rs {avg_win:,.0f} | Avg Loss: Rs {avg_loss:,.0f}\n"
+        "Reward:Risk Ratio: {rr} {rr_note}\n"
+        "Max Drawdown: Rs {mdd:,.0f}\n"
+        "Total Charges Paid: Rs {charges:,.0f}\n\n"
+        "=== WINNING SETUP PATTERN (when trader wins most) ===\n"
+        "{best_pattern}\n\n"
+        "=== LOSING SETUP PATTERN (when trader loses most) ===\n"
+        "{worst_pattern}\n\n"
+        "=== SPECIFIC MISTAKES DETECTED IN TRADE HISTORY ===\n"
+        "{mistakes}\n\n"
+        "=== PERSONAL RULES TRIGGERED BY DATA ===\n"
+        "{rules}\n\n"
+        "=== LAST 20 ACTUAL TRADES (most recent first) ===\n"
+        "{trade_rows}\n\n"
+        "When the trader asks ANY question, your answer must be grounded in the data above.\n"
+        "Do NOT give textbook answers. Give answers that address THIS trader's specific patterns.\n"
+    ).format(
         dt=_today_ctx,
         verdict=_vd["verdict"],
         vdetail=_vd["verdict_detail"],
         passn=_vd["pass_count"],
         warnn=_vd["warn_count"],
         failn=_vd["fail_count"],
+        tw_label=_vd["tw"]["label"],
+        tw_note=_vd["tw"]["note"],
         total_trades=_trade_stats["total_trades"],
-        win_rate=_trade_stats["win_rate"],
+        win_rate=_wr_val,
+        wr_note=_wr_note,
         total_pnl=_trade_stats["total_pnl"],
         best=_trade_stats["best_trade"],
         worst=_trade_stats["worst_trade"],
         avg_win=_trade_stats["avg_win"],
         avg_loss=_trade_stats["avg_loss"],
-        rr=_trade_stats["reward_risk"],
+        rr=_rr_val,
+        rr_note=_rr_note,
         mdd=_trade_stats["max_drawdown"],
         charges=_trade_stats["total_charges"],
+        best_pattern=_best_pattern_str,
+        worst_pattern=_worst_pattern_str,
+        mistakes=_mistake_summary,
+        rules=_personal_rules_str,
+        trade_rows=_trade_rows_str,
     )
 
-    # ── Suggested starter questions ───────────────────────────────────────────
-    st.markdown("**💡 Try asking:**")
+    # ── Suggested starter questions (personalised based on data) ─────────────
+    st.markdown("**💡 Try asking — these are specific to YOUR trade history:**")
     q_cols = st.columns(3)
-    starter_qs = [
-        "Should I trade today?",
-        "What's wrong with my win rate?",
-        "How do I set my stop-loss for NIFTY options?",
-        "Explain ATM vs OTM options",
-        "How do I manage a losing streak?",
-        "What is the 9-gate entry checklist?",
-    ]
+    # Dynamically build questions based on what mistakes were actually found
+    starter_qs = ["What are my biggest mistakes?", "Why am I losing money?", "Should I trade today?"]
+    if _mistake_summary != "No trade history — no mistakes to analyse yet.":
+        if "RSI" in _mistake_summary:
+            starter_qs.append("Explain my RSI entry problem")
+        if "Supertrend" in _mistake_summary:
+            starter_qs.append("Why is trading against Supertrend bad for me?")
+        if "Revenge" in _mistake_summary:
+            starter_qs.append("How do I stop revenge trading?")
+        if "Overtrad" in _mistake_summary:
+            starter_qs.append("How do I stop overtrading?")
+        if "WAIT" in _mistake_summary:
+            starter_qs.append("Why should I trust the dashboard's WAIT signal?")
+    starter_qs = starter_qs[:6]  # keep max 6
     for i, q in enumerate(starter_qs):
         if q_cols[i % 3].button(q, key="sq_{}".format(i), use_container_width=True):
             if "ai_messages" not in st.session_state:
